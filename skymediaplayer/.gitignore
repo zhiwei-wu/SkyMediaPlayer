@@ -1,0 +1,12 @@
+/build
+
+# C/C++ build files
+.cxx/
+.externalNativeBuild/
+
+# CMake
+cmake-build-*/
+
+# NDK
+obj/
+libs/

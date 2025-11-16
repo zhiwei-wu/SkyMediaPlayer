@@ -1,3 +1,6 @@
+*.iml
+.gradle
+/local.properties
 # Gradle files
 .gradle/
 build/
@@ -32,3 +35,5 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+.DS_Store

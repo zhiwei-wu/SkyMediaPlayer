@@ -152,12 +152,23 @@ class SkyVideoView(context: Context,
     }
 
     fun setVideoURI(uri: Uri) {
-        // TODO: _vidoeUri ffmpeg 内部待支持
-        //_videoUri = uri
-
-        // 使用 Utils 工具类将 URI 转换为本地路径
+        // 尝试将 URI 转换为本地路径
         _localVideoPath = Utils.getRealPathFromURI(context, uri)
-        Log.d(TAG, "setVideoURI: $uri, converted to path: $_localVideoPath")
+
+        // 如果转换失败，复制到临时文件
+        if (_localVideoPath == null) {
+            Log.d(TAG, "setVideoURI: $uri, cannot convert to path, copying to temp file")
+            _localVideoPath = Utils.copyUriToTempFile(context, uri)
+            if (_localVideoPath != null) {
+                Log.d(TAG, "setVideoURI: copied to temp file: $_localVideoPath")
+            } else {
+                Log.e(TAG, "setVideoURI: failed to copy URI to temp file")
+            }
+        } else {
+            Log.d(TAG, "setVideoURI: $uri, converted to path: $_localVideoPath")
+        }
+
+        _videoUri = null
         openVideo()
     }
 

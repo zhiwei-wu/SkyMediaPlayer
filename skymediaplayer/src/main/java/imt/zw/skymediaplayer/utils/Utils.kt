@@ -54,15 +54,76 @@ object Utils {
                     // DownloadsProvider
                     isDownloadsDocument(uri) -> {
                         val id = DocumentsContract.getDocumentId(uri)
+                        Log.d(TAG, "DownloadsProvider document ID: $id")
+
+                        // 处理 raw: 前缀的情况
                         if (id.startsWith("raw:")) {
-                            return id.replaceFirst("raw:", "")
+                            val path = id.replaceFirst("raw:", "")
+                            Log.d(TAG, "Raw path: $path")
+                            return path
                         }
 
-                        val contentUri = ContentUris.withAppendedId(
-                            Uri.parse("content://downloads/public_downloads"),
-                            id.toLongOrNull() ?: 0L
-                        )
-                        getDataColumn(context, contentUri, null, null)
+                        // 处理 msf: 前缀的情况（Android 10+ 的下载文件）
+                        if (id.startsWith("msf:")) {
+                            val msfId = id.substring(4) // 移除 "msf:" 前缀
+                            Log.d(TAG, "MSF ID: $msfId")
+
+                            // 方法1: 尝试通过 MediaStore.Downloads 查询（Android 10+）
+                            try {
+                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                                    val contentUri = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+                                    val selection = "_id=?"
+                                    val selectionArgs = arrayOf(msfId)
+                                    val path = getDataColumn(context, contentUri, selection, selectionArgs)
+                                    if (path != null) {
+                                        Log.d(TAG, "Found path via MediaStore.Downloads: $path")
+                                        return path
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error querying MediaStore.Downloads", e)
+                            }
+
+                            // 方法2: 尝试直接使用原始 URI
+                            try {
+                                val path = getDataColumn(context, uri, null, null)
+                                if (path != null) {
+                                    Log.d(TAG, "Found path via original URI: $path")
+                                    return path
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error querying original URI", e)
+                            }
+
+                            // 方法3: 尝试通过 content://media/external/downloads 查询
+                            try {
+                                val contentUri = Uri.parse("content://media/external/downloads/$msfId")
+                                val path = getDataColumn(context, contentUri, null, null)
+                                if (path != null) {
+                                    Log.d(TAG, "Found path via media/external/downloads: $path")
+                                    return path
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error querying media/external/downloads", e)
+                            }
+
+                            Log.w(TAG, "All methods failed for msf ID: $msfId")
+                            return null
+                        }
+
+                        // 处理纯数字 ID 的情况
+                        val numericId = id.toLongOrNull()
+                        if (numericId != null) {
+                            val contentUri = ContentUris.withAppendedId(
+                                Uri.parse("content://downloads/public_downloads"),
+                                numericId
+                            )
+                            return getDataColumn(context, contentUri, null, null)
+                        }
+
+                        // 如果都不匹配，返回 null
+                        Log.w(TAG, "Unknown document ID format: $id")
+                        null
                     }
                     else -> null
                 }
@@ -118,6 +179,44 @@ object Utils {
      */
     private fun isMediaDocument(uri: Uri): Boolean {
         return "com.android.providers.media.documents" == uri.authority
+    }
+
+    /**
+     * 将 URI 内容复制到临时文件
+     * 当无法直接获取文件路径时使用此方法
+     */
+    fun copyUriToTempFile(context: Context, uri: Uri): String? {
+        return try {
+            // 获取文件扩展名
+            val extension = context.contentResolver.getType(uri)?.let { mimeType ->
+                when {
+                    mimeType.startsWith("video/") -> ".${mimeType.substring(6)}"
+                    else -> ".tmp"
+                }
+            } ?: ".tmp"
+
+            // 创建临时文件
+            val tempFile = java.io.File.createTempFile(
+                "video_${System.currentTimeMillis()}",
+                extension,
+                context.cacheDir
+            )
+
+            Log.d(TAG, "Copying URI to temp file: ${tempFile.absolutePath}")
+
+            // 复制内容
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                tempFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+
+            Log.d(TAG, "Successfully copied URI to temp file, size: ${tempFile.length()} bytes")
+            tempFile.absolutePath
+        } catch (e: Exception) {
+            Log.e(TAG, "Error copying URI to temp file", e)
+            null
+        }
     }
 
     /**

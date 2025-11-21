@@ -59,10 +59,6 @@ enum AVPacketSideDataType {
      * An AV_PKT_DATA_PARAM_CHANGE side data packet is laid out as follows:
      * @code
      * u32le param_flags
-     * if (param_flags & AV_SIDE_DATA_PARAM_CHANGE_CHANNEL_COUNT)
-     *     s32le channel_count
-     * if (param_flags & AV_SIDE_DATA_PARAM_CHANGE_CHANNEL_LAYOUT)
-     *     u64le channel_layout
      * if (param_flags & AV_SIDE_DATA_PARAM_CHANGE_SAMPLE_RATE)
      *     s32le sample_rate
      * if (param_flags & AV_SIDE_DATA_PARAM_CHANGE_DIMENSIONS)
@@ -146,7 +142,7 @@ enum AVPacketSideDataType {
     AV_PKT_DATA_CPB_PROPERTIES,
 
     /**
-     * Recommmends skipping the specified number of samples
+     * Recommends skipping the specified number of samples
      * @code
      * u32le number of samples to skip from start of this packet
      * u32le number of samples to skip from end of this packet
@@ -300,6 +296,73 @@ enum AVPacketSideDataType {
     AV_PKT_DATA_DYNAMIC_HDR10_PLUS,
 
     /**
+     * IAMF Mix Gain Parameter Data associated with the audio frame. This metadata
+     * is in the form of the AVIAMFParamDefinition struct and contains information
+     * defined in sections 3.6.1 and 3.8.1 of the Immersive Audio Model and
+     * Formats standard.
+     */
+    AV_PKT_DATA_IAMF_MIX_GAIN_PARAM,
+
+    /**
+     * IAMF Demixing Info Parameter Data associated with the audio frame. This
+     * metadata is in the form of the AVIAMFParamDefinition struct and contains
+     * information defined in sections 3.6.1 and 3.8.2 of the Immersive Audio Model
+     * and Formats standard.
+     */
+    AV_PKT_DATA_IAMF_DEMIXING_INFO_PARAM,
+
+    /**
+     * IAMF Recon Gain Info Parameter Data associated with the audio frame. This
+     * metadata is in the form of the AVIAMFParamDefinition struct and contains
+     * information defined in sections 3.6.1 and 3.8.3 of the Immersive Audio Model
+     * and Formats standard.
+     */
+    AV_PKT_DATA_IAMF_RECON_GAIN_INFO_PARAM,
+
+    /**
+     * Ambient viewing environment metadata, as defined by H.274. This metadata
+     * should be associated with a video stream and contains data in the form
+     * of the AVAmbientViewingEnvironment struct.
+    */
+    AV_PKT_DATA_AMBIENT_VIEWING_ENVIRONMENT,
+
+    /**
+     * The number of pixels to discard from the top/bottom/left/right border of the
+     * decoded frame to obtain the sub-rectangle intended for presentation.
+     *
+     * @code
+     * u32le crop_top
+     * u32le crop_bottom
+     * u32le crop_left
+     * u32le crop_right
+     * @endcode
+     */
+    AV_PKT_DATA_FRAME_CROPPING,
+
+    /**
+     * Raw LCEVC payload data, as a uint8_t array, with NAL emulation
+     * bytes intact.
+     */
+    AV_PKT_DATA_LCEVC,
+
+    /**
+     * This side data contains information about the reference display width(s)
+     * and reference viewing distance(s) as well as information about the
+     * corresponding reference stereo pair(s), i.e., the pair(s) of views to be
+     * displayed for the viewer's left and right eyes on the reference display
+     * at the reference viewing distance.
+     * The payload is the AV3DReferenceDisplaysInfo struct defined in
+     * libavutil/tdrdi.h.
+     */
+    AV_PKT_DATA_3D_REFERENCE_DISPLAYS,
+
+    /**
+     * Contains the last received RTCP SR (Sender Report) information
+     * in the form of the AVRTCPSenderReport struct.
+     */
+    AV_PKT_DATA_RTCP_SR,
+
+    /**
      * The number of side data types.
      * This is not part of the public API/ABI in the sense that it may
      * change when new side data types are added.
@@ -310,8 +373,6 @@ enum AVPacketSideDataType {
     AV_PKT_DATA_NB
 };
 
-#define AV_PKT_DATA_QUALITY_FACTOR AV_PKT_DATA_QUALITY_STATS //DEPRECATED
-
 /**
  * This structure stores auxiliary information for decoding, presenting, or
  * otherwise processing the coded stream. It is typically exported by demuxers
@@ -320,11 +381,11 @@ enum AVPacketSideDataType {
  *
  * Global side data is handled as follows:
  * - During demuxing, it may be exported through
- *   @ref AVStream.codecpar.side_data "AVStream's codec parameters", which can
+ *   @ref AVCodecParameters.coded_side_data "AVStream's codec parameters", which can
  *   then be passed as input to decoders through the
  *   @ref AVCodecContext.coded_side_data "decoder context's side data", for
  *   initialization.
- * - For muxing, it can be fed through @ref AVStream.codecpar.side_data
+ * - For muxing, it can be fed through @ref AVCodecParameters.coded_side_data
  *   "AVStream's codec parameters", typically  the output of encoders through
  *   the @ref AVCodecContext.coded_side_data "encoder context's side data", for
  *   initialization.
@@ -565,13 +626,6 @@ typedef struct AVPacketList {
 #define AV_PKT_FLAG_DISPOSABLE 0x0010
 
 enum AVSideDataParamChangeFlags {
-#if FF_API_OLD_CHANNEL_LAYOUT
-    /**
-     * @deprecated those are not used by any decoder
-     */
-    AV_SIDE_DATA_PARAM_CHANGE_CHANNEL_COUNT  = 0x0001,
-    AV_SIDE_DATA_PARAM_CHANGE_CHANNEL_LAYOUT = 0x0002,
-#endif
     AV_SIDE_DATA_PARAM_CHANGE_SAMPLE_RATE    = 0x0004,
     AV_SIDE_DATA_PARAM_CHANGE_DIMENSIONS     = 0x0008,
 };
@@ -838,6 +892,13 @@ int av_packet_make_writable(AVPacket *pkt);
  *               converted
  */
 void av_packet_rescale_ts(AVPacket *pkt, AVRational tb_src, AVRational tb_dst);
+
+/**
+ * Allocate an AVContainerFifo instance for AVPacket.
+ *
+ * @param flags currently unused
+ */
+struct AVContainerFifo *av_container_fifo_alloc_avpacket(unsigned flags);
 
 /**
  * @}

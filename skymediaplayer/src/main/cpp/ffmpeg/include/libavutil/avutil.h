@@ -41,7 +41,6 @@
  * @li @ref lavd "libavdevice" special devices muxing/demuxing library
  * @li @ref lavu "libavutil" common utility library
  * @li @ref lswr "libswresample" audio resampling, format conversion and mixing
- * @li @ref lpp  "libpostproc" post processing library
  * @li @ref libsws "libswscale" color conversion and scaling library
  *
  * @section ffmpeg_versioning Versioning and compatibility
@@ -314,6 +313,7 @@ static inline void *av_x_if_null(const void *p, const void *x)
     return (void *)(intptr_t)(p ? p : x);
 }
 
+#if FF_API_OPT_INT_LIST
 /**
  * Compute the length of an integer list.
  *
@@ -322,6 +322,7 @@ static inline void *av_x_if_null(const void *p, const void *x)
  * @param list    pointer to the list
  * @return  length of the list, in elements, not counting the terminator
  */
+attribute_deprecated
 unsigned av_int_list_length_for_size(unsigned elsize,
                                      const void *list, uint64_t term) av_pure;
 
@@ -334,18 +335,6 @@ unsigned av_int_list_length_for_size(unsigned elsize,
  */
 #define av_int_list_length(list, term) \
     av_int_list_length_for_size(sizeof(*(list)), list, term)
-
-#if FF_API_AV_FOPEN_UTF8
-/**
- * Open a file using a UTF-8 filename.
- * The API of this function matches POSIX fopen(), errors are returned through
- * errno.
- * @deprecated Avoid using it, as on Windows, the FILE* allocated by this
- *             function may be allocated with a different CRT than the caller
- *             who uses the FILE*. No replacement provided in public API.
- */
-attribute_deprecated
-FILE *av_fopen_utf8(const char *path, const char *mode);
 #endif
 
 /**

@@ -1,6 +1,10 @@
+import org.gradle.api.publish.maven.MavenPublication
+import org.gradle.api.publish.PublishingExtension
+
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+    `maven-publish`
 }
 
 android {
@@ -70,5 +74,47 @@ tasks.register("testClasses") {
 tasks.whenTaskAdded {
     if (name == "testClasses") {
         dependsOn("testDebugUnitTest")
+    }
+}
+
+// Maven 发布配置（用于 JitPack）
+afterEvaluate {
+    extensions.configure<PublishingExtension> {
+        publications {
+            create<MavenPublication>("release") {
+                from(components["release"])
+
+                groupId = "com.github.zhiwei-wu"
+                artifactId = "skymediaplayer"
+                version = "1.0.0"
+
+                pom {
+                    name.set("SkyMediaPlayer")
+                    description.set("A high-performance Android media player based on FFmpeg")
+                    url.set("https://github.com/zhiwei-wu/SkyPlayer")
+
+                    licenses {
+                        license {
+                            name.set("MIT License")
+                            url.set("https://opensource.org/licenses/MIT")
+                        }
+                    }
+
+                    developers {
+                        developer {
+                            id.set("zhiwei-wu")
+                            name.set("Wu Zhiwei")
+                            email.set("zhiwei.wu@foxmail.com")
+                        }
+                    }
+
+                    scm {
+                        connection.set("scm:git:git://github.com/zhiwei-wu/SkyPlayer.git")
+                        developerConnection.set("scm:git:ssh://github.com/zhiwei-wu/SkyPlayer.git")
+                        url.set("https://github.com/zhiwei-wu/SkyPlayer")
+                    }
+                }
+            }
+        }
     }
 }

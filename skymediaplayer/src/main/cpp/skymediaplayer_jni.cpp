@@ -350,8 +350,6 @@ JNI_OnLoad(JavaVM *vm, void *reserved) {
         return JNI_ERR;
     }
 
-    ffp_global_init();
-
     ALOG_I(TAG, "%s ok ^_^", __func__);
     return JNI_VERSION_1_6;
 }

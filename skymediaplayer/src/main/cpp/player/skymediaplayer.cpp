@@ -1,5 +1,6 @@
 extern "C" {
 #include "libavutil/pixdesc.h"
+#include "libavutil/log.h"
 }
 
 #include "logger.h"
@@ -7,11 +8,18 @@ extern "C" {
 #include "ffplay.h"
 #include "skymediaplayer_interface.h"
 
-// 声明在skymediaplayer_jni.cpp中定义的全局函数
 extern bool postEventToJava(SkyPlayer* player, int what, int arg1, int arg2, jobject obj);
+
+namespace {
+    std::once_flag ffmpegLogInitFlag;
+}
 
 SkyPlayer* createSkyPlayer() {
     FUNC_TRACE()
+
+    // 日志输出
+    // std::call_once(ffmpegLogInitFlag, setupFfmpegLogCallback);
+
     auto* player = new SkyPlayer();
     player->getSkyVideoOutHandler().setSkyRenderer(std::make_unique<SkyEGL2Renderer>());
     return player;
@@ -572,4 +580,34 @@ int64_t SkyPlayer::getDuration() {
 
 void SkyPlayer::stop() {
 
+}
+
+namespace {
+
+constexpr int mapFfmpegLogLevelToAndroid(int ffmpegLevel) noexcept {
+    if (ffmpegLevel <= AV_LOG_ERROR) {
+        return ANDROID_LOG_ERROR;
+    }
+    if (ffmpegLevel == AV_LOG_WARNING) {
+        return ANDROID_LOG_WARN;
+    }
+    if (ffmpegLevel == AV_LOG_INFO) {
+        return ANDROID_LOG_INFO;
+    }
+    if (ffmpegLevel >= AV_LOG_VERBOSE) {
+        return ANDROID_LOG_DEBUG;
+    }
+    return ANDROID_LOG_INFO;
+}
+
+void androidAvLogCallback(void* ptr, int level, const char* fmt, va_list vl) noexcept {
+    const int androidLogLevel = mapFfmpegLogLevelToAndroid(level);
+    __android_log_vprint(androidLogLevel, "FFmpeg", fmt, vl);
+}
+
+}
+
+void setupFfmpegLogCallback() noexcept {
+    av_log_set_level(AV_LOG_QUIET);
+    av_log_set_callback(androidAvLogCallback);
 }

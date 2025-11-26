@@ -7,7 +7,6 @@
 #include <atomic>
 #include <jni.h>
 #include "skyrenderer.h"
-#include "../ffplay/sky_ffplay.h"
 #include "skyaudio.h"
 #include "sky_msg_queue.h"
 
@@ -296,5 +295,7 @@ private:
 
 SkyPlayer* createSkyPlayer();
 void setSkyPlayerWeakJavaPlayer(SkyPlayer *player, void *weakJavaPlayer);
+
+void setupFfmpegLogCallback() noexcept;
 
 #endif //MY_PLAYER_SKYMEDIAPLAYER_H

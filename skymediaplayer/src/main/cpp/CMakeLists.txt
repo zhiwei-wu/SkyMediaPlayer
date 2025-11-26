@@ -50,7 +50,6 @@ include_directories(${CMAKE_SOURCE_DIR}/ffplay)
 # used in the AndroidManifest.xml file.
 add_library(${CMAKE_PROJECT_NAME} SHARED
         # List C/C++ source files with relative paths to this CMakeLists.txt.
-        ffplay/sky_ffplay.c
         ffplay/ffplay.c
         ffplay/cmdutils.c
         ffplay/opt_common.c

@@ -40,7 +40,7 @@
 - **可运行的示例**：app 模块提供完整的 Demo
 - **教学级代码**：适合学习音视频开发的完整实现
 
-目前已支持本地文件播放，在线播放、直播等功能持续迭代中。
+目前已支持本地文件播放和在线视频播放（HTTP/HTTPS/HLS），直播等功能持续迭代中。
 
 ## 🏗️ 架构设计
 
@@ -125,9 +125,29 @@ SkyPlayer 采用清晰的分层架构设计：
 - **命令行工具**（`cmdutils.c`、`opt_common.c`）：参数解析和配置
 - **适配层**（`sky_ffplay.c/h`）：Android 平台适配
 
+## 🎬 支持的格式和协议
+
+### 视频格式
+- **容器格式**：MP4、AVI、MKV、WebM、MOV
+- **视频编码**：H.264、H.265/HEVC、MPEG-4、MPEG-2、VP8、VP9
+
+### 音频格式
+- **音频编码**：AAC、MP3、Opus、Vorbis
+
+### 网络协议
+- **HTTP/HTTPS**：标准 HTTP(S) 视频流
+- **HLS (m3u8)**：Apple HTTP Live Streaming，支持自适应码率
+- **本地文件**：支持本地存储的所有支持格式
+
+### 技术特性
+- ✅ **OpenSSL 集成**：支持 HTTPS 加密传输
+- ✅ **HLS 自适应码率**：根据网络状况自动切换清晰度
+- ✅ **网络流缓冲**：智能缓冲策略，流畅播放
+- ✅ **断点续播**：支持 Seek 到任意位置
+
 ## 🚀 快速开始
 
-### 基本使用
+### 本地视频播放
 
 ```kotlin
 import imt.zw.skymediaplayer.player.SkyMediaPlayer
@@ -141,8 +161,8 @@ class MainActivity : AppCompatActivity() {
         // 创建播放器实例
         player = SkyMediaPlayer()
         
-        // 设置播放地址
-        player.setDataSource("localPath/video.mp4")
+        // 设置本地视频路径
+        player.setDataSource("/sdcard/Movies/video.mp4")
         
         // 设置渲染 Surface
         player.setSurface(surfaceView.holder.surface)
@@ -167,6 +187,23 @@ class MainActivity : AppCompatActivity() {
         player.release()
     }
 }
+```
+
+### 在线视频播放
+
+```kotlin
+// HTTP/HTTPS 视频
+player.setDataSource("https://example.com/video.mp4")
+
+// HLS 直播流
+player.setDataSource("https://example.com/live/stream.m3u8")
+
+// 设置其他参数与本地播放相同
+player.setSurface(surfaceView.holder.surface)
+player.setOnPreparedListener {
+    player.start()
+}
+player.prepareAsync()
 ```
 
 ### 播放控制
@@ -247,10 +284,53 @@ cd SkyPlayer
 2. 打开项目
 使用 Android Studio 打开项目
 
-3. 编译aar，集成到你的项目
+3. 编译 aar，集成到你的项目
 ```bash
 ./gradlew :skymediaplayer:assembleRelease
 ```
+
+### FFmpeg 编译配置
+
+本项目使用定制编译的 FFmpeg，支持以下特性：
+
+#### 网络支持
+- **OpenSSL 集成**：支持 HTTPS 加密传输
+- **网络协议**：HTTP、HTTPS、TCP、UDP、RTP、RTSP、HLS
+- **流媒体格式**：HLS (m3u8)、MPEG-TS
+
+#### 编译配置要点
+
+```bash
+# 启用网络支持
+--enable-network
+
+# 启用 OpenSSL（HTTPS 支持）
+--enable-openssl
+
+# 支持的解封装器
+--enable-demuxer=mov,mp4,avi,matroska,webm,hls,mpegts
+
+# 支持的网络协议
+--enable-protocol=file,http,https,tcp,udp,rtp,rtsp,hls
+
+# OpenSSL 链接
+--extra-cflags="-I$OPENSSL_DIR/include"
+--extra-ldflags="-L$OPENSSL_DIR/lib"
+# 静态链接 libssl.a 和 libcrypto.a
+```
+
+详细的编译脚本请参考：[build_skyplayer_ffmpeg.sh](https://github.com/zhiwei-wu/FFmpeg/blob/main/build_skyplayer_ffmpeg.sh)
+
+#### 关键配置变更
+
+**提交**: `f1b2f39` - 支持 http,https,hls 协议
+
+主要变更：
+1. **启用网络支持**：`--enable-network`
+2. **集成 OpenSSL**：`--enable-openssl`
+3. **新增 HLS 支持**：`--enable-demuxer=hls,mpegts`
+4. **扩展网络协议**：`--enable-protocol=http,https,tcp,udp,rtp,rtsp,hls`
+5. **链接 OpenSSL 库**：静态链接 `libssl.a` 和 `libcrypto.a`
 
 ## 📱 示例应用
 
@@ -281,12 +361,15 @@ cd SkyPlayer
 - [x] 本地文件播放支持
 - [x] 播放控制（播放、暂停、Seek）
 - [x] 事件回调机制
+- [x] **在线视频播放（HTTP/HTTPS）** 🎉
+- [x] **HLS 直播流支持（m3u8）** 🎉
+- [x] **OpenSSL 集成（HTTPS 加密传输）** 🎉
 
 ### 进行中 🚧
-- [ ] 在线视频播放（HTTP/HTTPS）
-- [ ] 直播流支持（RTMP、HLS）
+- [ ] RTMP 直播流支持
 - [ ] 字幕支持
 - [ ] 播放列表管理
+- [ ] 网络状态监控和自适应
 
 ### 计划中 📋
 - [ ] 硬件解码支持（MediaCodec）
@@ -294,6 +377,7 @@ cd SkyPlayer
 - [ ] 截图功能
 - [ ] 视频录制
 - [ ] 更多音视频格式支持
+- [ ] RTSP 流支持
 
 ## 🙏 致谢
 

@@ -55,10 +55,55 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.main_activity_layout)
 
+        // 本地视频播放
         val btnPlayVideo = findViewById<Button>(R.id.btn_play_video)
         btnPlayVideo.setOnClickListener {
             checkPermissionsAndOpenFilePicker()
         }
+
+        // 预设在线视频链接
+        val btnPlayVideo1 = findViewById<Button>(R.id.btn_play_video_1)
+        btnPlayVideo1.setOnClickListener {
+            playOnlineVideo("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4")
+        }
+
+        val btnPlayVideo2 = findViewById<Button>(R.id.btn_play_video_2)
+        btnPlayVideo2.setOnClickListener {
+            playOnlineVideo("https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8")
+        }
+
+        val btnPlayVideo3 = findViewById<Button>(R.id.btn_play_video_3)
+        btnPlayVideo3.setOnClickListener {
+            playOnlineVideo("http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4")
+        }
+
+        // 自定义URL播放
+        val etCustomUrl = findViewById<android.widget.EditText>(R.id.et_custom_url)
+        val btnPlayCustomUrl = findViewById<Button>(R.id.btn_play_custom_url)
+        btnPlayCustomUrl.setOnClickListener {
+            val customUrl = etCustomUrl.text.toString().trim()
+            if (customUrl.isEmpty()) {
+                Toast.makeText(this, "请输入视频URL", Toast.LENGTH_SHORT).show()
+            } else if (!customUrl.startsWith("http://") && !customUrl.startsWith("https://")) {
+                Toast.makeText(this, "URL必须以 http:// 或 https:// 开头", Toast.LENGTH_SHORT).show()
+            } else {
+                playOnlineVideo(customUrl)
+            }
+        }
+    }
+
+    /**
+     * 播放在线视频
+     * 支持 HTTP/HTTPS/HLS 等网络协议
+     * @param videoUrl 视频URL
+     */
+    private fun playOnlineVideo(videoUrl: String) {
+        // 启动 SkyVideoActivity 并传递在线视频 URL
+        val intent = Intent(this, SkyVideoActivity::class.java)
+        intent.putExtra("video_url", videoUrl)
+        startActivity(intent)
+
+        Toast.makeText(this, "正在加载在线视频...", Toast.LENGTH_SHORT).show()
     }
 
     /**

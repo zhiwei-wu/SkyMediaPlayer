@@ -289,6 +289,9 @@ private:
     // 添加设置播放器状态的方法
     void setPlayerState(PlayerState state);
 
+    // 将 PlayerState 转换为可读字符串
+    const char* getPlayerStateString(PlayerState state);
+
     // 添加销毁标志
     std::atomic<bool> isDestroyed_{false};
 };

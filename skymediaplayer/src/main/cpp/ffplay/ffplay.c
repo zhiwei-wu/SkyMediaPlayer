@@ -2761,6 +2761,30 @@ static int read_thread(void *arg)
         scan_all_pmts_set = 1;
     }
 
+    // ========== 网络播放参数配置 (方案A) ==========
+    // 只对网络协议（http/https/rtmp/rtsp等）设置网络选项
+    if (strstr(is->filename, "://") != NULL &&
+        (strncmp(is->filename, "http://", 7) == 0 ||
+         strncmp(is->filename, "https://", 8) == 0 ||
+         strncmp(is->filename, "rtmp://", 7) == 0 ||
+         strncmp(is->filename, "rtsp://", 7) == 0)) {
+        // 1. 超时配置
+        av_dict_set(&format_opts, "timeout", "5000000", 0);        // 连接超时 5秒 (微秒)
+        av_dict_set(&format_opts, "rw_timeout", "10000000", 0);    // 读写超时 10秒 (微秒)
+
+        // 2. 缓冲配置
+        av_dict_set(&format_opts, "max_delay", "500000", 0);       // 最大延迟 500ms (微秒)
+
+        // 3. HTTP/HTTPS 配置
+        av_dict_set(&format_opts, "user_agent", "SkyPlayer/1.0 (Android)", 0);
+        av_dict_set(&format_opts, "reconnect", "1", 0);            // 启用自动重连
+        av_dict_set(&format_opts, "reconnect_streamed", "1", 0);   // 流媒体重连
+        av_dict_set(&format_opts, "reconnect_delay_max", "5", 0);  // 最大重连延迟 5秒
+
+        av_log(NULL, AV_LOG_INFO, "Network options configured for: %s\n", is->filename);
+    }
+    // ========== 网络播放参数配置结束 ==========
+
     // 发送打开输入消息
     sky_post_simple_message(is->skyPlayer, SKY_MSG_OPEN_INPUT);
 
@@ -2993,6 +3017,24 @@ static int read_thread(void *arg)
             || (stream_has_enough_packets(is->audio_st, is->audio_stream, &is->audioq) &&
                 stream_has_enough_packets(is->video_st, is->video_stream, &is->videoq) &&
                 stream_has_enough_packets(is->subtitle_st, is->subtitle_stream, &is->subtitleq)))) {
+
+            // ========== 缓冲进度上报 (方案A) ==========
+            // 计算缓冲百分比和缓冲时长
+            int total_queue_size = is->audioq.size + is->videoq.size + is->subtitleq.size;
+            int buffer_percent = (total_queue_size * 100) / MAX_QUEUE_SIZE;
+
+            // 计算缓冲时长（毫秒）
+            int64_t cached_duration = 0;
+            if (is->audio_st && is->audioq.duration > 0) {
+                cached_duration = is->audioq.duration / 1000; // 转换为毫秒
+            } else if (is->video_st && is->videoq.duration > 0) {
+                cached_duration = is->videoq.duration / 1000;
+            }
+
+            // 发送缓冲更新消息
+            sky_post_message_ii(is->skyPlayer, SKY_MSG_BUFFERING_UPDATE, buffer_percent, (int)cached_duration);
+            // ========== 缓冲进度上报结束 ==========
+
             /* wait 10 ms */
             SDL_LockMutex(wait_mutex);
             SDL_WaitConditionTimeout(is->continue_read_thread, wait_mutex, 10);

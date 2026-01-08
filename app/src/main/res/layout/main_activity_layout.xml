@@ -1,15 +1,103 @@
 <?xml version="1.0" encoding="utf-8"?>
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:fillViewport="true">
 
-    <Button
-        android:id="@+id/btn_play_video"
-        android:layout_width="wrap_content"
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_centerInParent="true"
-        android:text="播放视频文件"
-        android:textSize="16sp"
-        android:padding="16dp" />
+        android:orientation="vertical"
+        android:padding="24dp">
 
-</RelativeLayout>
+        <!-- 本地视频播放 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="本地视频"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btn_play_video"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="播放本地视频文件"
+            android:textSize="16sp"
+            android:padding="16dp"
+            android:layout_marginBottom="24dp" />
+
+        <!-- 在线视频播放 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="在线视频"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <!-- 预设视频链接选择 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="选择测试视频："
+            android:textSize="14sp"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btn_play_video_1"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Big Buck Bunny (HTTPS)"
+            android:textSize="14sp"
+            android:padding="12dp"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btn_play_video_2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Big Buck Bunny (HLS/m3u8)"
+            android:textSize="14sp"
+            android:padding="12dp"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btn_play_video_3"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Elephant Dream (HTTP)"
+            android:textSize="14sp"
+            android:padding="12dp"
+            android:layout_marginBottom="16dp" />
+
+        <!-- 自定义URL输入 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="或输入自定义URL："
+            android:textSize="14sp"
+            android:layout_marginBottom="8dp" />
+
+        <EditText
+            android:id="@+id/et_custom_url"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="输入视频URL (http:// 或 https://)"
+            android:inputType="textUri"
+            android:minHeight="48dp"
+            android:padding="12dp"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btn_play_custom_url"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="播放自定义URL"
+            android:textSize="16sp"
+            android:padding="16dp" />
+
+    </LinearLayout>
+
+</ScrollView>

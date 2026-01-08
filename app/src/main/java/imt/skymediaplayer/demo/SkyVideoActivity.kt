@@ -28,21 +28,37 @@ class SkyVideoActivity : AppCompatActivity() {
 
         setContentView(R.layout.activity_layout)
 
-         // 检查是否从MainActivity传递了视频URI
-        val videoUriString = intent.getStringExtra("video_uri")
-        if (videoUriString == null) {
-            Toast.makeText(this, "未选择视频文件", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val videoUri = Uri.parse(videoUriString)
-        Log.d("SkyVideoActivity", "Received video URI: $videoUri")
-
+        // ========== 支持本地文件和在线视频 (方案A) ==========
         mSkyVideoView = findViewById(R.id.sky_video_view)
-        mSkyVideoView.setVideoURI(videoUri)
         mMediaController = MediaController(this, false)
         mSkyVideoView.setMediaController(mMediaController)
+
+        // 检查是否传递了在线视频 URL
+        val videoUrl = intent.getStringExtra("video_url")
+        if (videoUrl != null) {
+            // 在线视频：直接使用 URL
+            Log.d("SkyVideoActivity", "Playing online video: $videoUrl")
+            mSkyVideoView.setVideoPath(videoUrl)
+            Toast.makeText(this, "正在连接服务器...", Toast.LENGTH_SHORT).show()
+        } else {
+            // 本地视频：使用 URI
+            val videoUriString = intent.getStringExtra("video_uri")
+            if (videoUriString == null) {
+                Toast.makeText(this, "未选择视频文件", Toast.LENGTH_SHORT).show()
+                finish()
+                return
+            }
+            val videoUri = Uri.parse(videoUriString)
+            Log.d("SkyVideoActivity", "Playing local video URI: $videoUri")
+            mSkyVideoView.setVideoURI(videoUri)
+        }
+
+        // 注意：SkyVideoView 内部已经实现了缓冲和错误监听器
+        // 缓冲进度会通过 Log 输出，错误会自动处理
+        // 如需自定义处理，可以修改 SkyVideoView 内部的监听器实现
+
         mSkyVideoView.start()
+        // ========== 支持本地文件和在线视频结束 ==========
     }
 
     private fun setupFullscreenMode() {

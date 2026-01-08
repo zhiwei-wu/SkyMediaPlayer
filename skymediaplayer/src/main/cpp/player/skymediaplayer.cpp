@@ -17,8 +17,8 @@ namespace {
 SkyPlayer* createSkyPlayer() {
     FUNC_TRACE()
 
-    // 日志输出
-    // std::call_once(ffmpegLogInitFlag, setupFfmpegLogCallback);
+    // ffmpeg 日志输出，放开注释
+//     std::call_once(ffmpegLogInitFlag, setupFfmpegLogCallback);
 
     auto* player = new SkyPlayer();
     player->getSkyVideoOutHandler().setSkyRenderer(std::make_unique<SkyEGL2Renderer>());
@@ -434,8 +434,27 @@ bool SkyPlayer::postMessage(int what, int arg1, int arg2, void* obj) {
     return messageQueue_.put(message);
 }
 
+// 将 PlayerState 转换为可读字符串
+const char* SkyPlayer::getPlayerStateString(PlayerState state) {
+    switch (state) {
+        case STATE_IDLE:            return "IDLE";
+        case STATE_INITIALIZED:     return "INITIALIZED";
+        case STATE_ASYNC_PREPARING: return "ASYNC_PREPARING";
+        case STATE_PREPARED:        return "PREPARED";
+        case STATE_STARTED:         return "STARTED";
+        case STATE_PAUSED:          return "PAUSED";
+        case STATE_COMPLETED:       return "COMPLETED";
+        case STATE_STOPPED:         return "STOPPED";
+        case STATE_ERROR:           return "ERROR";
+        case STATE_END:             return "END";
+        default:                    return "UNKNOWN";
+    }
+}
+
 void SkyPlayer::setPlayerState(PlayerState state) {
-    ALOG_I(TAG, "setPlayerState() from=%d -> %d", playerState, state);
+    ALOG_I(TAG, "setPlayerState() from=%s(%d) -> %s(%d)",
+           getPlayerStateString(playerState), playerState,
+           getPlayerStateString(state), state);
     bool stateChanged = playerState != state;
     playerState = state;
     if (stateChanged) {
@@ -532,7 +551,6 @@ void SkyPlayer::handleMessage(const SkyMessage& message) {
             break;
 
         default:
-            ALOG_W(TAG, "handleMessage() unknown message what=%d", message.what);
             break;
     }
 }
@@ -608,6 +626,6 @@ void androidAvLogCallback(void* ptr, int level, const char* fmt, va_list vl) noe
 }
 
 void setupFfmpegLogCallback() noexcept {
-    av_log_set_level(AV_LOG_QUIET);
+    av_log_set_level(AV_LOG_INFO);  // 改为 INFO 级别，可以看到重要信息和错误
     av_log_set_callback(androidAvLogCallback);
 }

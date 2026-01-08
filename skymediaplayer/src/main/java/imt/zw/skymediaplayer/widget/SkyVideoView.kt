@@ -169,7 +169,15 @@ class SkyVideoView(context: Context,
         }
 
         _videoUri = null
-        openVideo()
+
+        // 检查 Surface 是否已经准备好
+        if (_surfaceRenderView?.getSurfaceHolder() != null) {
+            Log.d(TAG, "setVideoURI: surface is ready, opening video immediately")
+            openVideo()
+        } else {
+            Log.d(TAG, "setVideoURI: surface not ready, will open video when surface is created")
+            // Surface 还没准备好，等待 surfaceCreated 回调
+        }
     }
 
     /**

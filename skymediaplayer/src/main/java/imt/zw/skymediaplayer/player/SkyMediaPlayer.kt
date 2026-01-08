@@ -109,7 +109,11 @@ class SkyMediaPlayer() : IMediaPlayer {
                     player._onCompletionListener?.onCompletion(player)
                 }
                 MEDIA_BUFFERING_UPDATE -> {
-                    // TODO: 处理MEDIA_BUFFERING_UPDATE事件
+                    // 处理缓冲更新事件 (方案A)
+                    // arg1: 缓冲百分比 (0-100)
+                    // arg2: 缓冲时长 (毫秒)
+                    Log.d(TAG, "handleEventFromNative MEDIA_BUFFERING_UPDATE percent=${msg.arg1}% duration=${msg.arg2}ms")
+                    player._onBufferingUpdateListener?.onBufferingUpdate(player, msg.arg1)
                 }
                 MEDIA_SEEK_COMPLETE -> {
                     Log.i(TAG, "handleEventFromNative MEDIA_SEEK_COMPLETE")

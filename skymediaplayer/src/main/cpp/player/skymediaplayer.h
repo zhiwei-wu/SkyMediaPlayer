@@ -218,6 +218,9 @@ public:
     int64_t getCurrentPosition();
     int64_t getDuration();
 
+    // 设置动态音频滤镜
+    int setAudioFilter(const char* filters);
+
     // 添加JNI相关方法
     void setDataSource(const char* path);
     const char *getDataSource() const;

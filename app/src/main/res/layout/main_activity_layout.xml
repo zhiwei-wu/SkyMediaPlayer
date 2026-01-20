@@ -70,6 +70,15 @@
             android:text="Elephant Dream (HTTP)"
             android:textSize="14sp"
             android:padding="12dp"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btn_play_cctv_news"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Sintel 预告片 (英文语音测试)"
+            android:textSize="14sp"
+            android:padding="12dp"
             android:layout_marginBottom="16dp" />
 
         <!-- 自定义URL输入 -->

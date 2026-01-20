@@ -1,6 +1,4 @@
 /*
- * Copyright (c) 2024
- *
  * This file is part of FFmpeg.
  *
  * FFmpeg is free software; you can redistribute it and/or
@@ -14,33 +12,75 @@
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with FFmpeg; if not, write to the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ * License along with FFmpeg; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
 #ifndef AVUTIL_GETENV_UTF8_H
 #define AVUTIL_GETENV_UTF8_H
 
-/* Forward declarations to avoid including system headers */
-#ifndef NULL
-#define NULL ((void*)0)
-#endif
+#include <stdlib.h>
 
-/* Declare external functions we need */
-extern char *getenv(const char *name);
+#include "config.h"
+#include "mem.h"
 
-/**
- * Get environment variable in UTF-8 encoding.
- * On non-Windows systems, this is just an alias for getenv().
- * On Windows, this converts from the system encoding to UTF-8.
- */
-#ifdef _WIN32
-char *getenv_utf8(const char *varname);
-void freeenv_utf8(char *var);
-void *fopen_utf8(const char *path, const char *mode);
+#if HAVE_GETENV && defined(_WIN32)
+
+#include "libavutil/wchar_filename.h"
+
+static inline char *getenv_utf8(const char *varname)
+{
+    wchar_t *varname_w, *var_w;
+    char *var;
+
+    if (utf8towchar(varname, &varname_w))
+        return NULL;
+    if (!varname_w)
+        return NULL;
+
+    var_w = _wgetenv(varname_w);
+    av_free(varname_w);
+
+    if (!var_w)
+        return NULL;
+    if (wchartoutf8(var_w, &var))
+        return NULL;
+
+    return var;
+
+    // No CP_ACP fallback compared to other *_utf8() functions:
+    // non UTF-8 strings must not be returned.
+}
+
+static inline void freeenv_utf8(char *var)
+{
+    av_free(var);
+}
+
+static inline char *getenv_dup(const char *varname)
+{
+    return getenv_utf8(varname);
+}
+
 #else
-#define getenv_utf8 getenv
-#define freeenv_utf8(x) ((void)0)
-#define fopen_utf8 fopen
-#endif
 
-#endif /* AVUTIL_GETENV_UTF8_H */
+static inline char *getenv_utf8(const char *varname)
+{
+    return getenv(varname);
+}
+
+static inline void freeenv_utf8(char *var)
+{
+}
+
+static inline char *getenv_dup(const char *varname)
+{
+    char *var = getenv(varname);
+    if (!var)
+        return NULL;
+    return av_strdup(var);
+}
+
+#endif // HAVE_GETENV && defined(_WIN32)
+
+#endif // AVUTIL_GETENV_UTF8_H

@@ -9,6 +9,7 @@ extern "C" {
 #include "skymediaplayer_interface.h"
 
 extern bool postEventToJava(SkyPlayer* player, int what, int arg1, int arg2, jobject obj);
+extern JNIEnv* getJNIEnv();
 
 namespace {
     std::once_flag ffmpegLogInitFlag;
@@ -152,10 +153,83 @@ bool sky_post_message_ii(void *player, int what, int arg1, int arg2) {
 
     auto* skyPlayer = reinterpret_cast<SkyPlayer*>(player);
 
-    ALOG_D(TAG, "sky_post_message_ii() what=%d, arg1=%d, arg2=%d",
-           what, arg1, arg2);
-
     return skyPlayer->postMessage(what, arg1, arg2);
+}
+
+bool sky_post_whisper_subtitle(void *player, const char *text) {
+    // 调用带 PTS 的版本，使用默认时间戳 -1 表示无时间戳
+    return sky_post_whisper_subtitle_with_pts(player, text, -1.0, -1.0);
+}
+
+/**
+ * 带 PTS 时间戳的 Whisper 字幕数据结构
+ * 用于在消息队列中传递字幕和时间信息
+ */
+struct WhisperSubtitleData {
+    char* text;           // 字幕文本（需要 free）
+    double start_time;    // 开始时间（秒）
+    double end_time;      // 结束时间（秒）
+};
+
+bool sky_set_whisper_prebuffer_mode(void *player, bool enabled) {
+    // 注意：此函数已废弃，保留仅为 API 兼容性
+    // 新的独立 Whisper 解码流方案会自动处理超前解码，不再需要预缓冲模式
+    // 独立解码流始终保持比播放位置超前 5-15 秒，确保 Whisper 有足够时间处理
+    
+    if (nullptr == player) {
+        ALOG_E(TAG, "sky_set_whisper_prebuffer_mode() player == null");
+        return false;
+    }
+
+    ALOG_I(TAG, "sky_set_whisper_prebuffer_mode() called with enabled=%d (deprecated, using independent decode stream)", 
+           enabled ? 1 : 0);
+    
+    // 不再执行任何操作，独立解码流会自动处理
+    return true;
+}
+
+bool sky_post_whisper_subtitle_with_pts(void *player, const char *text, double start_time, double end_time) {
+    if (nullptr == player) {
+        ALOG_E(TAG, "sky_post_whisper_subtitle_with_pts() player == null");
+        return false;
+    }
+
+    if (nullptr == text || text[0] == '\0') {
+        ALOG_D(TAG, "sky_post_whisper_subtitle_with_pts() empty text, skipping");
+        return true;
+    }
+
+    auto* skyPlayer = reinterpret_cast<SkyPlayer*>(player);
+
+    // 创建字幕数据结构
+    auto* subtitleData = new WhisperSubtitleData();
+    subtitleData->text = strdup(text);
+    subtitleData->start_time = start_time;
+    subtitleData->end_time = end_time;
+
+    if (nullptr == subtitleData->text) {
+        ALOG_E(TAG, "sky_post_whisper_subtitle_with_pts() strdup failed");
+        delete subtitleData;
+        return false;
+    }
+
+    ALOG_I(TAG, "sky_post_whisper_subtitle_with_pts() text=%s, start=%.3f, end=%.3f", 
+           text, start_time, end_time);
+
+    return skyPlayer->postMessage(SKY_MSG_WHISPER_SUBTITLE, 0, 0, subtitleData);
+}
+
+bool sky_post_whisper_prebuffer_complete(void *player, int subtitle_count) {
+    if (nullptr == player) {
+        ALOG_E(TAG, "sky_post_whisper_prebuffer_complete() player == null");
+        return false;
+    }
+
+    auto* skyPlayer = reinterpret_cast<SkyPlayer*>(player);
+
+    ALOG_I(TAG, "sky_post_whisper_prebuffer_complete() subtitle_count=%d", subtitle_count);
+
+    return skyPlayer->postMessage(SKY_MSG_WHISPER_PREBUFFER_COMPLETE, subtitle_count, 0);
 }
 
 // ============================================================================
@@ -550,6 +624,72 @@ void SkyPlayer::handleMessage(const SkyMessage& message) {
             postMediaEventToJava(MEDIA_EVENT_TYPE::MEDIA_ERROR, message.arg1, message.arg2);
             break;
 
+        case SKY_MSG_WHISPER_PREBUFFER_COMPLETE:
+            ALOG_I(TAG, "handleMessage() SKY_MSG_WHISPER_PREBUFFER_COMPLETE count=%d", message.arg1);
+            postEventToJava(SKY_MSG_WHISPER_PREBUFFER_COMPLETE, message.arg1, 0, nullptr);
+            break;
+
+        case SKY_MSG_WHISPER_SUBTITLE:
+            ALOG_I(TAG, "handleMessage() SKY_MSG_WHISPER_SUBTITLE");
+            if (message.obj != nullptr) {
+                // 解析 WhisperSubtitleData 结构
+                auto* subtitleData = static_cast<WhisperSubtitleData*>(message.obj);
+                const char* text = subtitleData->text;
+                double startTime = subtitleData->start_time;
+                double endTime = subtitleData->end_time;
+                
+                ALOG_I(TAG, "handleMessage() SKY_MSG_WHISPER_SUBTITLE text=%s, start=%.3f, end=%.3f", 
+                       text, startTime, endTime);
+                
+                // 获取 JNIEnv 并创建参数
+                JNIEnv* env = getJNIEnv();
+                if (env) {
+                    jstring jstr = env->NewStringUTF(text);
+                    if (jstr) {
+                        // 将时间戳转换为毫秒（long 类型）
+                        // arg1 和 arg2 用于传递 start_time 和 end_time（毫秒）
+                        // 由于 arg1/arg2 是 int，我们使用 obj 数组传递
+                        // 创建一个包含 [text, startTimeMs, endTimeMs] 的数组
+                        jclass arrayClass = env->FindClass("[Ljava/lang/Object;");
+                        jobjectArray objArray = env->NewObjectArray(3, env->FindClass("java/lang/Object"), nullptr);
+                        
+                        // 设置字幕文本
+                        env->SetObjectArrayElement(objArray, 0, jstr);
+                        
+                        // 设置开始时间（毫秒）
+                        jclass longClass = env->FindClass("java/lang/Long");
+                        jmethodID longValueOf = env->GetStaticMethodID(longClass, "valueOf", "(J)Ljava/lang/Long;");
+                        jlong startTimeMs = (jlong)(startTime * 1000);
+                        jobject startTimeLong = env->CallStaticObjectMethod(longClass, longValueOf, startTimeMs);
+                        env->SetObjectArrayElement(objArray, 1, startTimeLong);
+                        
+                        // 设置结束时间（毫秒）
+                        jlong endTimeMs = (jlong)(endTime * 1000);
+                        jobject endTimeLong = env->CallStaticObjectMethod(longClass, longValueOf, endTimeMs);
+                        env->SetObjectArrayElement(objArray, 2, endTimeLong);
+                        
+                        // 发送到 Java 层
+                        postEventToJava(SKY_MSG_WHISPER_SUBTITLE, 0, 0, objArray);
+                        
+                        // 清理本地引用
+                        env->DeleteLocalRef(endTimeLong);
+                        env->DeleteLocalRef(startTimeLong);
+                        env->DeleteLocalRef(longClass);
+                        env->DeleteLocalRef(objArray);
+                        env->DeleteLocalRef(jstr);
+                    } else {
+                        ALOG_E(TAG, "handleMessage() SKY_MSG_WHISPER_SUBTITLE: Failed to create jstring");
+                    }
+                } else {
+                    ALOG_E(TAG, "handleMessage() SKY_MSG_WHISPER_SUBTITLE: Failed to get JNIEnv");
+                }
+                
+                // 释放 WhisperSubtitleData 结构
+                free(subtitleData->text);
+                delete subtitleData;
+            }
+            break;
+
         default:
             break;
     }
@@ -594,6 +734,22 @@ int64_t SkyPlayer::getDuration() {
 
     // 转换为毫秒
     return duration_us / 1000;
+}
+
+int SkyPlayer::setAudioFilter(const char* filters) {
+    std::lock_guard<std::mutex> lock(mtx);
+    if (!is) {
+        ALOG_E(TAG, "setAudioFilter() VideoState is null");
+        return -1;
+    }
+
+    int ret = set_audio_filters(is, filters);
+    if (ret < 0) {
+        ALOG_E(TAG, "setAudioFilter() failed: %d", ret);
+    } else {
+        ALOG_I(TAG, "setAudioFilter() success: %s", filters ? filters : "(none)");
+    }
+    return ret;
 }
 
 void SkyPlayer::stop() {

@@ -52,6 +52,42 @@ bool sky_post_simple_message(void *player, int what);
  */
 bool sky_post_message_ii(void *player, int what, int arg1, int arg2);
 
+/**
+ * 发送 Whisper 字幕消息
+ * @param player SkyPlayer 实例指针
+ * @param text 字幕文本（UTF-8 编码）
+ * @return 成功返回 true，失败返回 false
+ */
+bool sky_post_whisper_subtitle(void *player, const char *text);
+
+/**
+ * 发送带 PTS 时间戳的 Whisper 字幕消息（用于 PTS 同步方案）
+ * @param player SkyPlayer 实例指针
+ * @param text 字幕文本（UTF-8 编码）
+ * @param start_time 字幕开始时间（秒）
+ * @param end_time 字幕结束时间（秒）
+ * @return 成功返回 true，失败返回 false
+ */
+bool sky_post_whisper_subtitle_with_pts(void *player, const char *text, double start_time, double end_time);
+
+/**
+ * 设置 Whisper 预缓冲模式
+ * 预缓冲模式下：音频解码继续但不播放，视频暂停，音频帧只送入 Whisper
+ * @param player SkyPlayer 实例指针
+ * @param enabled 是否启用预缓冲模式
+ * @return 成功返回 true，失败返回 false
+ */
+bool sky_set_whisper_prebuffer_mode(void *player, bool enabled);
+
+/**
+ * 发送 Whisper 预缓冲完成消息
+ * 当第一条字幕生成后调用，通知 Java 层隐藏 loading UI
+ * @param player SkyPlayer 实例指针
+ * @param subtitle_count 已缓冲的字幕数量
+ * @return 成功返回 true，失败返回 false
+ */
+bool sky_post_whisper_prebuffer_complete(void *player, int subtitle_count);
+
 #ifdef __cplusplus
 };
 #endif

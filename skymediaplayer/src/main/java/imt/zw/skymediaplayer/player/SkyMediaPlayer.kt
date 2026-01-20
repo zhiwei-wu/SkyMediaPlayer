@@ -31,6 +31,10 @@ class SkyMediaPlayer() : IMediaPlayer {
         private const val MEDIA_INFO = 200
         private const val MEDIA_SET_VIDEO_SAR = 10001
 
+        // Whisper 字幕消息（与 sky_messages.h 中的 SKY_MSG_WHISPER_SUBTITLE 对应）
+        private const val MEDIA_WHISPER_SUBTITLE = 30001
+        private const val MEDIA_WHISPER_PREBUFFER_COMPLETE = 30002
+
         init {
             try {
                 // 按依赖顺序加载库：先加载依赖库，再加载主库
@@ -143,6 +147,52 @@ class SkyMediaPlayer() : IMediaPlayer {
                 MEDIA_INFO -> {
                     // TODO: 处理MEDIA_INFO事件
                 }
+                MEDIA_WHISPER_SUBTITLE -> {
+                    // 处理 Whisper 字幕事件（带 PTS 时间戳）
+                    val objArray = msg.obj as? Array<*>
+                    if (objArray != null && objArray.size >= 3) {
+                        val subtitleText = objArray[0] as? String
+                        val startTimeMs = (objArray[1] as? Long) ?: -1L
+                        val endTimeMs = (objArray[2] as? Long) ?: -1L
+                        
+                        if (!subtitleText.isNullOrEmpty()) {
+                            Log.i(TAG, "handleEventFromNative MEDIA_WHISPER_SUBTITLE: $subtitleText, start=$startTimeMs, end=$endTimeMs")
+                            
+                            // 将字幕加入缓冲队列（用于 PTS 同步）
+                            val subtitleData = SubtitleData(subtitleText, startTimeMs, endTimeMs)
+                            synchronized(player._subtitleQueue) {
+                                player._subtitleQueue.add(subtitleData)
+                            }
+                            
+                            // 回调带时间戳的监听器
+                            player._onSubtitleWithPtsListener?.onSubtitle(player, subtitleText, startTimeMs, endTimeMs)
+                            
+                            // 同时回调旧的监听器（兼容）
+                            player._onSubtitleListener?.onSubtitle(player, subtitleText)
+                        }
+                    } else {
+                        // 兼容旧格式（直接是字符串）
+                        val subtitleText = msg.obj as? String
+                        if (!subtitleText.isNullOrEmpty()) {
+                            Log.i(TAG, "handleEventFromNative MEDIA_WHISPER_SUBTITLE (legacy): $subtitleText")
+                            
+                            // 将字幕加入缓冲队列（无时间戳）
+                            val subtitleData = SubtitleData(subtitleText, -1L, -1L)
+                            synchronized(player._subtitleQueue) {
+                                player._subtitleQueue.add(subtitleData)
+                            }
+                            
+                            player._onSubtitleWithPtsListener?.onSubtitle(player, subtitleText, -1L, -1L)
+                            player._onSubtitleListener?.onSubtitle(player, subtitleText)
+                        }
+                    }
+                }
+                MEDIA_WHISPER_PREBUFFER_COMPLETE -> {
+                    // 处理预缓冲完成事件
+                    val subtitleCount = msg.arg1
+                    Log.i(TAG, "handleEventFromNative MEDIA_WHISPER_PREBUFFER_COMPLETE: count=$subtitleCount")
+                    player._onPrebufferCompleteListener?.onPrebufferComplete(player, subtitleCount)
+                }
                 else -> {
                     // TODO: 处理未知事件
                 }
@@ -157,6 +207,62 @@ class SkyMediaPlayer() : IMediaPlayer {
     private var _onVideoSizeChangedListener: IMediaPlayer.OnVideoSizeChangedListener ?= null
     private var _onErrorListener: IMediaPlayer.OnErrorListener ?= null
     private var _onInfoListener: IMediaPlayer.OnInfoListener ?= null
+    private var _onSubtitleListener: OnSubtitleListener ?= null
+    private var _onSubtitleWithPtsListener: OnSubtitleWithPtsListener ?= null
+    private var _onPrebufferCompleteListener: OnPrebufferCompleteListener ?= null
+    
+    // 字幕缓冲队列（用于 PTS 同步）
+    private val _subtitleQueue = mutableListOf<SubtitleData>()
+
+    /**
+     * Whisper 字幕监听器接口
+     */
+    interface OnSubtitleListener {
+        /**
+         * 收到字幕文本时回调（不带时间戳，兼容旧接口）
+         * @param mp 播放器实例
+         * @param text 字幕文本
+         */
+        fun onSubtitle(mp: IMediaPlayer, text: String)
+    }
+
+    /**
+     * 带时间戳的 Whisper 字幕监听器接口（用于 PTS 同步方案）
+     */
+    interface OnSubtitleWithPtsListener {
+        /**
+         * 收到带时间戳的字幕文本时回调
+         * @param mp 播放器实例
+         * @param text 字幕文本
+         * @param startTimeMs 字幕开始时间（毫秒），-1 表示未知
+         * @param endTimeMs 字幕结束时间（毫秒），-1 表示未知
+         */
+        fun onSubtitle(mp: IMediaPlayer, text: String, startTimeMs: Long, endTimeMs: Long)
+    }
+
+    /**
+     * 字幕数据类（用于 PTS 同步方案）
+     * @param text 字幕文本
+     * @param startTimeMs 字幕开始时间（毫秒）
+     * @param endTimeMs 字幕结束时间（毫秒）
+     */
+    data class SubtitleData(
+        val text: String,
+        val startTimeMs: Long,
+        val endTimeMs: Long
+    )
+
+    /**
+     * 预缓冲完成监听器接口
+     */
+    interface OnPrebufferCompleteListener {
+        /**
+         * 预缓冲完成时回调
+         * @param mp 播放器实例
+         * @param subtitleCount 已缓冲的字幕数量
+         */
+        fun onPrebufferComplete(mp: IMediaPlayer, subtitleCount: Int)
+    }
 
     private var _surfaceHolder:SurfaceHolder ?= null
     private var _nativeMediaPlayer: Long = 0
@@ -188,6 +294,10 @@ class SkyMediaPlayer() : IMediaPlayer {
     private external fun _getDuration(): Long
     @Keep
     private external fun _isPlaying(): Boolean
+    @Keep
+    private external fun _setAudioFilter(filter: String?): Int
+    @Keep
+    private external fun _setWhisperPrebufferMode(enabled: Boolean): Boolean
     // private external fun _reset()
     // private external fun _setVolume(leftVolume: Float, rightVolume: Float)
     // private external fun _getAudioSessionId(): Int
@@ -267,7 +377,6 @@ class SkyMediaPlayer() : IMediaPlayer {
 
     override fun getCurrentPosition(): Long {
         val curPos = _getCurrentPosition()
-        Log.i(TAG, "getCurrentPosition: $curPos，formatStr=${Utils.formatTime(curPos)}")
         return curPos
     }
 
@@ -350,5 +459,145 @@ class SkyMediaPlayer() : IMediaPlayer {
 
     override fun setOnInfoListener(listener: IMediaPlayer.OnInfoListener) {
         _onInfoListener = listener
+    }
+
+    /**
+     * 设置 Whisper 字幕监听器
+     * @param listener 字幕监听器
+     */
+    fun setOnSubtitleListener(listener: OnSubtitleListener?) {
+        _onSubtitleListener = listener
+    }
+
+    /**
+     * 设置带时间戳的 Whisper 字幕监听器（用于 PTS 同步方案）
+     * @param listener 字幕监听器
+     */
+    fun setOnSubtitleWithPtsListener(listener: OnSubtitleWithPtsListener?) {
+        _onSubtitleWithPtsListener = listener
+    }
+
+    /**
+     * 设置预缓冲完成监听器
+     * @param listener 预缓冲完成监听器
+     */
+    fun setOnPrebufferCompleteListener(listener: OnPrebufferCompleteListener?) {
+        _onPrebufferCompleteListener = listener
+    }
+
+    /**
+     * 获取当前应该显示的字幕
+     * 
+     * 由于 Whisper 识别存在固有延迟（约 15-30 秒），字幕的 PTS 时间戳会落后于当前播放位置。
+     * 因此采用 "最新可用字幕" 策略：
+     * - 显示最近收到的、尚未过期的字幕
+     * - 字幕显示时长为 3 秒（从收到时刻开始计算）
+     * - 这样即使字幕有延迟，用户也能看到最新的识别结果
+     * 
+     * @return 当前应该显示的字幕数据，如果没有则返回 null
+     */
+    fun getCurrentSubtitle(): SubtitleData? {
+        val currentPos = getCurrentPosition()
+        
+        synchronized(_subtitleQueue) {
+            // 策略：显示最新收到的字幕，保持显示 3 秒
+            // 由于 Whisper 延迟，我们不能用 PTS 精确同步，而是用 "最新可用" 策略
+            
+            if (_subtitleQueue.isEmpty()) {
+                return null
+            }
+            
+            // 获取最新的字幕（队列末尾）
+            val latestSubtitle = _subtitleQueue.lastOrNull() ?: return null
+            
+            // 检查字幕是否应该显示
+            // 使用字幕的 endTimeMs 作为显示截止时间的参考
+            // 但由于 Whisper 延迟，我们需要更宽松的判断
+            
+            // 如果队列中有多个字幕，只保留最新的几个（避免队列无限增长）
+            val maxQueueSize = 10
+            if (_subtitleQueue.size > maxQueueSize) {
+                val removeCount = _subtitleQueue.size - maxQueueSize
+                repeat(removeCount) {
+                    _subtitleQueue.removeAt(0)
+                }
+            }
+            
+            // 返回最新的字幕
+            // 字幕的显示时长由 UI 层控制（通过 startTimeMs 和 endTimeMs 的差值）
+            return latestSubtitle
+        }
+    }
+
+    /**
+     * 获取字幕缓冲队列的副本
+     * @return 字幕队列的副本
+     */
+    fun getSubtitleQueue(): List<SubtitleData> {
+        synchronized(_subtitleQueue) {
+            return _subtitleQueue.toList()
+        }
+    }
+
+    /**
+     * 清空字幕缓冲队列
+     */
+    fun clearSubtitleQueue() {
+        synchronized(_subtitleQueue) {
+            _subtitleQueue.clear()
+        }
+    }
+
+    /**
+     * 设置动态音频滤镜
+     * @param filter 滤镜描述字符串，如 "whisper=model=/path/to/model.bin:language=zh"，传 null 清除滤镜
+     * @return 0 成功，负值失败
+     */
+    fun setAudioFilter(filter: String?): Int {
+        Log.i(TAG, "setAudioFilter: ${filter ?: "(none)"}")
+        return _setAudioFilter(filter)
+    }
+
+    /**
+     * 启用或禁用 Whisper AI 字幕
+     * @param enabled 是否启用
+     * @param modelPath 模型文件路径（启用时必须提供）
+     * @param language 语言代码，如 "zh"、"en"，默认 "zh"
+     * @param queueSeconds 推理间隔（秒），范围 3-20，默认 10
+     * @return 0 成功，负值失败
+     */
+    fun setWhisperEnabled(
+        enabled: Boolean,
+        modelPath: String? = null,
+        language: String = "zh",
+        queueSeconds: Int = 10
+    ): Int {
+        return if (enabled) {
+            if (modelPath.isNullOrEmpty()) {
+                Log.e(TAG, "setWhisperEnabled: modelPath is required when enabling Whisper")
+                -1
+            } else {
+                // 确保 queueSeconds 在有效范围内 (3-20)
+                val validQueueSeconds = queueSeconds.coerceIn(3, 20)
+                val filter = "whisper=model=$modelPath:language=$language:queue=${validQueueSeconds}s:use_gpu=1"
+                Log.i(TAG, "setWhisperEnabled: enabling with filter=$filter")
+                setAudioFilter(filter)
+            }
+        } else {
+            Log.i(TAG, "setWhisperEnabled: disabling Whisper")
+            setAudioFilter(null)
+        }
+    }
+
+    /**
+     * 设置 Whisper 预缓冲模式
+     * 预缓冲模式下：音频解码继续但不播放，视频暂停，音频帧只送入 Whisper
+     * 用于在开启 AI 字幕时预先缓冲一些字幕，避免字幕延迟
+     * @param enabled 是否启用预缓冲模式
+     * @return true 成功，false 失败
+     */
+    fun setWhisperPrebufferMode(enabled: Boolean): Boolean {
+        Log.i(TAG, "setWhisperPrebufferMode: enabled=$enabled")
+        return _setWhisperPrebufferMode(enabled)
     }
 }

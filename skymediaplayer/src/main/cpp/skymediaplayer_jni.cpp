@@ -4,6 +4,7 @@
 #include <android/log.h>
 
 #include "player/skymediaplayer.h"
+#include "include/skymediaplayer_interface.h"
 #include "logger.h"
 
 extern "C" {
@@ -35,7 +36,7 @@ static void create_env_key() {
 }
 
 // 获取当前线程的JNIEnv，如果需要会自动attach
-static JNIEnv* getJNIEnv() {
+JNIEnv* getJNIEnv() {
     if (!g_jvm) {
         return nullptr;
     }
@@ -315,6 +316,38 @@ jboolean sky_mediaPlayer_isPlaying(JNIEnv *env, jobject thiz) {
     return JNI_FALSE;
 }
 
+jint sky_mediaPlayer_setAudioFilter(JNIEnv *env, jobject thiz, jstring filter) {
+    auto* player = asSkyPlayer(env, thiz);
+    if (nullptr == player) {
+        ALOG_E(TAG, "setAudioFilter: player is null");
+        return -1;
+    }
+
+    const char* nativeFilter = nullptr;
+    if (filter != nullptr) {
+        nativeFilter = env->GetStringUTFChars(filter, nullptr);
+    }
+
+    int result = player->setAudioFilter(nativeFilter);
+
+    if (nativeFilter != nullptr) {
+        env->ReleaseStringUTFChars(filter, nativeFilter);
+    }
+
+    return result;
+}
+
+jboolean sky_mediaPlayer_setWhisperPrebufferMode(JNIEnv *env, jobject thiz, jboolean enabled) {
+    auto* player = asSkyPlayer(env, thiz);
+    if (nullptr == player) {
+        ALOG_E(TAG, "setWhisperPrebufferMode: player is null");
+        return JNI_FALSE;
+    }
+
+    bool result = sky_set_whisper_prebuffer_mode(player, enabled == JNI_TRUE);
+    return result ? JNI_TRUE : JNI_FALSE;
+}
+
 static JNINativeMethod methods[] = {
         {"_native_setup", "()V", (void *) (sky_mediaPlayer_native_setup)},
         {"_setDataSource", "(Ljava/lang/String;)V", (void *) sky_mediaPlayer_setDataSource},
@@ -327,7 +360,9 @@ static JNINativeMethod methods[] = {
         {"_getCurrentPosition", "()J", (void *) sky_mediaPlayer_getCurrentPosition},
         {"_getDuration", "()J", (void *) sky_mediaPlayer_getDuration},
         {"_isPlaying", "()Z", (void *) sky_mediaPlayer_isPlaying},
-        {"_release", "()V", (void *) sky_mediaPlayer_release}
+        {"_release", "()V", (void *) sky_mediaPlayer_release},
+        {"_setAudioFilter", "(Ljava/lang/String;)I", (void *) sky_mediaPlayer_setAudioFilter},
+        {"_setWhisperPrebufferMode", "(Z)Z", (void *) sky_mediaPlayer_setWhisperPrebufferMode}
 };
 
 extern "C" JNIEXPORT jint JNICALL

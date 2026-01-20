@@ -77,6 +77,12 @@ class MainActivity : AppCompatActivity() {
             playOnlineVideo("http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4")
         }
 
+        // Sintel 预告片（英文语音测试，适合测试 Whisper 英文识别）
+        val btnPlayCctvNews = findViewById<Button>(R.id.btn_play_cctv_news)
+        btnPlayCctvNews.setOnClickListener {
+            playOnlineVideo("https://media.w3.org/2010/05/sintel/trailer.mp4")
+        }
+
         // 自定义URL播放
         val etCustomUrl = findViewById<android.widget.EditText>(R.id.et_custom_url)
         val btnPlayCustomUrl = findViewById<Button>(R.id.btn_play_custom_url)

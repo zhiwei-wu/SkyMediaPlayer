@@ -159,6 +159,10 @@ static const enum AVSampleFormat sample_fmts[] = { AV_SAMPLE_FMT_S16, AV_SAMPLE_
 
 /* 函数声明 */
 static void stop_refresh_thread(VideoState *is);
+static int decode_interrupt_cb(void *ctx);
+static void stop_whisper_decode_stream(VideoState *is);
+static int start_whisper_decode_stream(VideoState *is);
+static void whisper_stream_seek(VideoState *is, int64_t pos);
 
 static int opt_add_vfilter(void *optctx, const char *opt, const char *arg)
 {
@@ -1052,6 +1056,18 @@ void stream_close(VideoState *is)
     /* XXX: use a special url_shutdown call to abort parse cleanly */
     is->abort_request = 1;
 
+    /* 停止独立 Whisper 解码流 */
+    stop_whisper_decode_stream(is);
+
+    /* 停止异步 Whisper 处理线程 */
+    if (is->whisper_tid) {
+        is->whisper_abort = 1;
+        if (is->whisper_cond)
+            SDL_SignalCondition(is->whisper_cond);
+        SDL_WaitThread(is->whisper_tid, NULL);
+        is->whisper_tid = NULL;
+    }
+
     /* 停止刷新线程 */
     stop_refresh_thread(is);
 
@@ -1084,6 +1100,22 @@ void stream_close(VideoState *is)
         SDL_DestroyTexture(is->vid_texture);
     if (is->sub_texture)
         SDL_DestroyTexture(is->sub_texture);
+
+    // 清理动态音频滤镜资源
+    if (is->audio_filter_mutex)
+        SDL_DestroyMutex(is->audio_filter_mutex);
+    av_freep(&is->audio_filters);
+
+    // 清理异步 Whisper 处理资源
+    if (is->whisper_agraph)
+        avfilter_graph_free(&is->whisper_agraph);
+    if (is->whisper_frame_queue)
+        av_fifo_freep2(&is->whisper_frame_queue);
+    if (is->whisper_mutex)
+        SDL_DestroyMutex(is->whisper_mutex);
+    if (is->whisper_cond)
+        SDL_DestroyCondition(is->whisper_cond);
+
     av_free(is);
 }
 
@@ -1655,8 +1687,17 @@ static int configure_filtergraph(AVFilterGraph *graph, const char *filtergraph,
         inputs->pad_idx     = 0;
         inputs->next        = NULL;
 
-        if ((ret = avfilter_graph_parse_ptr(graph, filtergraph, &inputs, &outputs, NULL)) < 0)
+        if ((ret = avfilter_graph_parse_ptr(graph, filtergraph, &inputs, &outputs, NULL)) < 0) {
+            char errbuf[256];
+            av_strerror(ret, errbuf, sizeof(errbuf));
+#ifdef __ANDROID__
+            __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", "[Whisper] avfilter_graph_parse_ptr failed: %d (%s), filter: %s", ret, errbuf, filtergraph);
+#endif
             goto fail;
+        }
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper] avfilter_graph_parse_ptr success, filter: %s", filtergraph);
+#endif
     } else {
         if ((ret = avfilter_link(source_ctx, 0, sink_ctx, 0)) < 0)
             goto fail;
@@ -1667,21 +1708,928 @@ static int configure_filtergraph(AVFilterGraph *graph, const char *filtergraph,
         FFSWAP(AVFilterContext*, graph->filters[i], graph->filters[i + nb_filters]);
 
     ret = avfilter_graph_config(graph, NULL);
+#ifdef __ANDROID__
+    if (ret < 0) {
+        char errbuf[256];
+        av_strerror(ret, errbuf, sizeof(errbuf));
+        __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", "[Whisper] avfilter_graph_config failed: %d (%s)", ret, errbuf);
+    } else {
+        __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper] avfilter_graph_config success");
+    }
+#endif
 fail:
     avfilter_inout_free(&outputs);
     avfilter_inout_free(&inputs);
     return ret;
 }
 
+/* ==================== 异步 Whisper 处理 ==================== */
+
+/**
+ * 检查滤镜字符串是否包含 whisper 滤镜
+ */
+static int contains_whisper_filter(const char *filters)
+{
+    if (!filters)
+        return 0;
+    return strstr(filters, "whisper") != NULL;
+}
+
+/**
+ * 从滤镜字符串中提取 whisper 滤镜部分
+ * 返回值需要调用者释放
+ */
+static char *extract_whisper_filter(const char *filters)
+{
+    if (!filters)
+        return NULL;
+    
+    const char *whisper_start = strstr(filters, "whisper");
+    if (!whisper_start)
+        return NULL;
+    
+    // 找到 whisper 滤镜的结束位置（下一个逗号或字符串结束）
+    const char *whisper_end = whisper_start;
+    int bracket_depth = 0;
+    while (*whisper_end) {
+        if (*whisper_end == '[')
+            bracket_depth++;
+        else if (*whisper_end == ']')
+            bracket_depth--;
+        else if (*whisper_end == ',' && bracket_depth == 0)
+            break;
+        whisper_end++;
+    }
+    
+    size_t len = whisper_end - whisper_start;
+    char *result = av_malloc(len + 1);
+    if (result) {
+        memcpy(result, whisper_start, len);
+        result[len] = '\0';
+    }
+    return result;
+}
+
+/**
+ * 配置 Whisper 专用滤镜图
+ * 这个滤镜图在独立线程中运行，不影响主音频输出
+ */
+static int configure_whisper_filters(VideoState *is, const char *whisper_filter)
+{
+    AVFilterContext *filt_asrc = NULL, *filt_asink = NULL;
+    AVBPrint bp;
+    char asrc_args[256];
+    int ret;
+
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper-Async] configure_whisper_filters start, filter: %s", whisper_filter ? whisper_filter : "(null)");
+#endif
+
+    avfilter_graph_free(&is->whisper_agraph);
+    if (!(is->whisper_agraph = avfilter_graph_alloc()))
+        return AVERROR(ENOMEM);
+    is->whisper_agraph->nb_threads = 1;  // Whisper 滤镜图使用单线程
+
+    av_bprint_init(&bp, 0, AV_BPRINT_SIZE_AUTOMATIC);
+    av_channel_layout_describe_bprint(&is->whisper_filter_src.ch_layout, &bp);
+
+    ret = snprintf(asrc_args, sizeof(asrc_args),
+                   "sample_rate=%d:sample_fmt=%s:time_base=%d/%d:channel_layout=%s",
+                   is->whisper_filter_src.freq, av_get_sample_fmt_name(is->whisper_filter_src.fmt),
+                   1, is->whisper_filter_src.freq, bp.str);
+
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper-Async] abuffer args: %s", asrc_args);
+#endif
+
+    ret = avfilter_graph_create_filter(&filt_asrc,
+                                       avfilter_get_by_name("abuffer"), "whisper_abuffer",
+                                       asrc_args, NULL, is->whisper_agraph);
+    if (ret < 0) {
+#ifdef __ANDROID__
+        char errbuf[256];
+        av_strerror(ret, errbuf, sizeof(errbuf));
+        __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", "[Whisper-Async] abuffer create failed: %d (%s)", ret, errbuf);
+#endif
+        goto end;
+    }
+
+    filt_asink = avfilter_graph_alloc_filter(is->whisper_agraph, avfilter_get_by_name("abuffersink"),
+                                             "whisper_abuffersink");
+    if (!filt_asink) {
+        ret = AVERROR(ENOMEM);
+        goto end;
+    }
+
+    ret = avfilter_init_dict(filt_asink, NULL);
+    if (ret < 0)
+        goto end;
+
+    if ((ret = configure_filtergraph(is->whisper_agraph, whisper_filter, filt_asrc, filt_asink)) < 0) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", "[Whisper-Async] configure_filtergraph failed: %d", ret);
+#endif
+        goto end;
+    }
+
+    is->whisper_in_filter = filt_asrc;
+    is->whisper_out_filter = filt_asink;
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper-Async] Whisper filter graph configured successfully");
+#endif
+
+end:
+    if (ret < 0)
+        avfilter_graph_free(&is->whisper_agraph);
+    av_bprint_finalize(&bp, NULL);
+    return ret;
+}
+
+/* ==================== 独立 Whisper 解码流（超前解码方案）==================== */
+
+/**
+ * 获取当前播放位置（秒）
+ * 用于计算 Whisper 解码流的超前量
+ */
+static double get_master_clock(VideoState *is);  // 前向声明
+
+/**
+ * Whisper 独立解码线程
+ * 从 whisper_audioq 队列中取出 packet，解码成音频帧，送入 whisper_frame_queue
+ */
+static int whisper_decode_thread(void *arg)
+{
+    VideoState *is = arg;
+    AVFrame *frame = av_frame_alloc();
+    AVPacket *pkt = av_packet_alloc();
+    int ret;
+
+    if (!frame || !pkt) {
+        av_frame_free(&frame);
+        av_packet_free(&pkt);
+        return AVERROR(ENOMEM);
+    }
+
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper-Decode] Decode thread started");
+#endif
+
+    while (!is->whisper_decode_abort) {
+        // 从 whisper_audioq 获取 packet
+        ret = packet_queue_get(&is->whisper_audioq, pkt, 1, NULL);
+        if (ret < 0) {
+            // 队列被中止或出错
+            break;
+        }
+        if (ret == 0) {
+            // 没有数据，继续等待
+            continue;
+        }
+
+        // 检查是否是 flush packet（seek 后的标记）
+        if (pkt->data == NULL && pkt->size == 0) {
+            // flush 解码器
+            avcodec_flush_buffers(is->whisper_avctx);
+            av_packet_unref(pkt);
+            continue;
+        }
+
+        // 发送 packet 到解码器
+        ret = avcodec_send_packet(is->whisper_avctx, pkt);
+        av_packet_unref(pkt);
+        
+        if (ret < 0) {
+            if (ret == AVERROR(EAGAIN)) {
+                // 解码器需要先接收帧
+            } else if (ret == AVERROR_EOF) {
+                // 解码器已结束
+                break;
+            } else {
+#ifdef __ANDROID__
+                __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", 
+                    "[Whisper-Decode] avcodec_send_packet failed: %d", ret);
+#endif
+                continue;
+            }
+        }
+
+        // 接收解码后的帧
+        while (!is->whisper_decode_abort) {
+            ret = avcodec_receive_frame(is->whisper_avctx, frame);
+            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+                break;
+            }
+            if (ret < 0) {
+#ifdef __ANDROID__
+                __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", 
+                    "[Whisper-Decode] avcodec_receive_frame failed: %d", ret);
+#endif
+                break;
+            }
+
+            // 更新当前解码位置（转换为微秒）
+            if (frame->pts != AV_NOPTS_VALUE && is->whisper_audio_st) {
+                is->whisper_decode_pts = av_rescale_q(frame->pts, 
+                    is->whisper_audio_st->time_base, AV_TIME_BASE_Q);
+            }
+
+            // 复制帧并送入 whisper_frame_queue
+            AVFrame *frame_copy = av_frame_clone(frame);
+            if (frame_copy) {
+                // 节流逻辑：当队列接近满时等待，控制队列大小
+                // 队列容量 = 1024，节流阈值 = 130（约 3 秒的音频）
+                // 当队列超过 130 帧时开始节流，等待 whisper_thread 消费
+                const size_t THROTTLE_THRESHOLD = 130;
+                
+                SDL_LockMutex(is->whisper_mutex);
+                
+                // 等待队列有足够空间
+                while (!is->whisper_decode_abort && 
+                       av_fifo_can_read(is->whisper_frame_queue) >= THROTTLE_THRESHOLD) {
+                    // 队列积压过多，等待 whisper_thread 消费
+                    SDL_UnlockMutex(is->whisper_mutex);
+                    av_usleep(10000);  // 等待 10ms
+                    SDL_LockMutex(is->whisper_mutex);
+                }
+                
+                if (is->whisper_decode_abort) {
+                    SDL_UnlockMutex(is->whisper_mutex);
+                    av_frame_free(&frame_copy);
+                } else if (av_fifo_can_write(is->whisper_frame_queue) == 0) {
+                    // 队列满了，丢弃新帧（理论上不应该到这里）
+                    SDL_UnlockMutex(is->whisper_mutex);
+                    av_frame_free(&frame_copy);
+                } else {
+                    av_fifo_write(is->whisper_frame_queue, &frame_copy, 1);
+                    SDL_SignalCondition(is->whisper_cond);
+                    SDL_UnlockMutex(is->whisper_mutex);
+                }
+            }
+            
+            av_frame_unref(frame);
+        }
+    }
+
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper-Decode] Decode thread exiting");
+#endif
+
+    av_frame_free(&frame);
+    av_packet_free(&pkt);
+    return 0;
+}
+
+/**
+ * Whisper 独立读取线程
+ * 独立打开同一个文件，读取音频 packet，始终保持比播放位置超前 N 秒
+ */
+static int whisper_read_thread(void *arg)
+{
+    VideoState *is = arg;
+    AVFormatContext *ic = NULL;
+    AVPacket *pkt = NULL;
+    int ret;
+    int audio_stream_index = -1;
+    SDL_Mutex *wait_mutex = SDL_CreateMutex();
+
+    if (!wait_mutex) {
+        ret = AVERROR(ENOMEM);
+        goto fail;
+    }
+
+    pkt = av_packet_alloc();
+    if (!pkt) {
+        ret = AVERROR(ENOMEM);
+        goto fail;
+    }
+
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", 
+        "[Whisper-Read] Read thread started, file: %s", is->filename);
+#endif
+
+    // 打开独立的格式上下文
+    ic = avformat_alloc_context();
+    if (!ic) {
+        ret = AVERROR(ENOMEM);
+        goto fail;
+    }
+    ic->interrupt_callback.callback = decode_interrupt_cb;
+    ic->interrupt_callback.opaque = is;
+
+    ret = avformat_open_input(&ic, is->filename, NULL, NULL);
+    if (ret < 0) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", 
+            "[Whisper-Read] Failed to open input: %d", ret);
+#endif
+        goto fail;
+    }
+    is->whisper_ic = ic;
+
+    ret = avformat_find_stream_info(ic, NULL);
+    if (ret < 0) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", 
+            "[Whisper-Read] Failed to find stream info: %d", ret);
+#endif
+        goto fail;
+    }
+
+    // 查找音频流
+    audio_stream_index = av_find_best_stream(ic, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
+    if (audio_stream_index < 0) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", 
+            "[Whisper-Read] No audio stream found");
+#endif
+        ret = AVERROR_STREAM_NOT_FOUND;
+        goto fail;
+    }
+    is->whisper_audio_stream = audio_stream_index;
+    is->whisper_audio_st = ic->streams[audio_stream_index];
+
+    // 创建音频解码器
+    const AVCodec *codec = avcodec_find_decoder(is->whisper_audio_st->codecpar->codec_id);
+    if (!codec) {
+        ret = AVERROR_DECODER_NOT_FOUND;
+        goto fail;
+    }
+
+    is->whisper_avctx = avcodec_alloc_context3(codec);
+    if (!is->whisper_avctx) {
+        ret = AVERROR(ENOMEM);
+        goto fail;
+    }
+
+    ret = avcodec_parameters_to_context(is->whisper_avctx, is->whisper_audio_st->codecpar);
+    if (ret < 0) {
+        goto fail;
+    }
+    is->whisper_avctx->pkt_timebase = is->whisper_audio_st->time_base;
+
+    ret = avcodec_open2(is->whisper_avctx, codec, NULL);
+    if (ret < 0) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", 
+            "[Whisper-Read] Failed to open codec: %d", ret);
+#endif
+        goto fail;
+    }
+
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", 
+        "[Whisper-Read] Audio stream opened, index=%d, sample_rate=%d",
+        audio_stream_index, is->whisper_avctx->sample_rate);
+#endif
+
+    // 启动解码线程
+    is->whisper_decode_abort = 0;
+    is->whisper_decode_tid = SDL_CreateThread(whisper_decode_thread, "whisper_decode", is);
+    if (!is->whisper_decode_tid) {
+        ret = AVERROR(ENOMEM);
+        goto fail;
+    }
+
+    // 主循环：读取 packet 并控制超前量
+    // 注意：暂停时不需要额外检测 is->paused，因为超前量控制会自然限速：
+    // 暂停时主时钟不动，whisper_decode_pts 持续增长，超前量达到 max_lead_time (15s) 后自动停止读取
+    // 这样也不会影响预缓冲阶段（预缓冲时视频也是暂停的，但需要 Whisper 继续工作）
+    while (!is->whisper_read_abort) {
+        // 处理 Seek 请求
+        if (is->whisper_seek_req) {
+            int64_t seek_target = is->whisper_seek_pos;
+            int64_t seek_min = INT64_MIN;
+            int64_t seek_max = INT64_MAX;
+
+            ret = avformat_seek_file(ic, -1, seek_min, seek_target, seek_max, is->whisper_seek_flags);
+            if (ret >= 0) {
+                // 清空队列
+                packet_queue_flush(&is->whisper_audioq);
+                // 发送 flush packet
+                packet_queue_put_nullpacket(&is->whisper_audioq, pkt, is->whisper_audio_stream);
+                // 更新解码位置
+                is->whisper_decode_pts = seek_target;
+#ifdef __ANDROID__
+                __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", 
+                    "[Whisper-Read] Seek completed to %.3f", seek_target / (double)AV_TIME_BASE);
+#endif
+            }
+            is->whisper_seek_req = 0;
+            is->whisper_eof = 0;
+        }
+
+        // 计算当前超前量
+        double play_pos = get_master_clock(is);
+        double whisper_pos = is->whisper_decode_pts / (double)AV_TIME_BASE;
+        double lead_time = whisper_pos - play_pos;
+
+        // 超前量控制
+        if (lead_time > is->whisper_max_lead_time) {
+            // 超前太多，暂停读取
+            SDL_LockMutex(wait_mutex);
+            SDL_WaitConditionTimeout(is->whisper_read_cond, wait_mutex, 100);
+            SDL_UnlockMutex(wait_mutex);
+            continue;
+        }
+
+        // 检查队列是否已满
+        if (is->whisper_audioq.size > MAX_QUEUE_SIZE / 4) {
+            SDL_LockMutex(wait_mutex);
+            SDL_WaitConditionTimeout(is->whisper_read_cond, wait_mutex, 10);
+            SDL_UnlockMutex(wait_mutex);
+            continue;
+        }
+
+        // 读取 packet
+        ret = av_read_frame(ic, pkt);
+        if (ret < 0) {
+            if (ret == AVERROR_EOF || avio_feof(ic->pb)) {
+                // 文件结束，发送空包
+                if (!is->whisper_eof) {
+                    packet_queue_put_nullpacket(&is->whisper_audioq, pkt, is->whisper_audio_stream);
+                    is->whisper_eof = 1;
+                }
+            }
+            SDL_LockMutex(wait_mutex);
+            SDL_WaitConditionTimeout(is->whisper_read_cond, wait_mutex, 10);
+            SDL_UnlockMutex(wait_mutex);
+            continue;
+        } else {
+            is->whisper_eof = 0;
+        }
+
+        // 只处理音频流
+        if (pkt->stream_index == audio_stream_index) {
+            packet_queue_put(&is->whisper_audioq, pkt);
+        } else {
+            av_packet_unref(pkt);
+        }
+    }
+
+    ret = 0;
+fail:
+    // 停止解码线程
+    if (is->whisper_decode_tid) {
+        is->whisper_decode_abort = 1;
+        packet_queue_abort(&is->whisper_audioq);
+        SDL_WaitThread(is->whisper_decode_tid, NULL);
+        is->whisper_decode_tid = NULL;
+    }
+
+    // 清理资源
+    if (is->whisper_avctx) {
+        avcodec_free_context(&is->whisper_avctx);
+    }
+    if (ic) {
+        avformat_close_input(&ic);
+        is->whisper_ic = NULL;
+    }
+    av_packet_free(&pkt);
+    if (wait_mutex) {
+        SDL_DestroyMutex(wait_mutex);
+    }
+
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper-Read] Read thread exiting");
+#endif
+
+    return ret;
+}
+
+/**
+ * 停止独立 Whisper 解码流
+ */
+static void stop_whisper_decode_stream(VideoState *is)
+{
+    if (is->whisper_read_tid) {
+        is->whisper_read_abort = 1;
+        
+        // 唤醒读取线程
+        if (is->whisper_read_cond) {
+            SDL_SignalCondition(is->whisper_read_cond);
+        }
+        
+        // 中止队列
+        packet_queue_abort(&is->whisper_audioq);
+        
+        SDL_WaitThread(is->whisper_read_tid, NULL);
+        is->whisper_read_tid = NULL;
+    }
+    
+    // 仅当队列已初始化时才清理（pkt_list 在 packet_queue_init 中分配）
+    if (is->whisper_audioq.pkt_list) {
+        packet_queue_destroy(&is->whisper_audioq);
+    }
+    
+    // 清理条件变量
+    if (is->whisper_read_cond) {
+        SDL_DestroyCondition(is->whisper_read_cond);
+        is->whisper_read_cond = NULL;
+    }
+}
+
+/**
+ * 启动独立 Whisper 解码流
+ * 创建独立的读取线程和解码线程，始终超前播放位置解码音频
+ */
+static int start_whisper_decode_stream(VideoState *is)
+{
+    int ret;
+
+    // 获取当前播放位置（微秒）
+    double current_pos = get_master_clock(is);
+    int64_t start_pos = 0;
+    if (!isnan(current_pos) && current_pos > 0) {
+        start_pos = (int64_t)(current_pos * AV_TIME_BASE);
+    }
+
+    // 初始化超前时间参数
+    is->whisper_lead_time = 10.0;      // 目标超前 10 秒
+    is->whisper_min_lead_time = 5.0;   // 最小超前 5 秒
+    is->whisper_max_lead_time = 15.0;  // 最大超前 15 秒
+    is->whisper_decode_pts = start_pos;  // 从当前播放位置开始
+    is->whisper_seek_req = (start_pos > 0) ? 1 : 0;  // 如果不是从头开始，需要 seek
+    is->whisper_seek_pos = start_pos;
+    is->whisper_seek_flags = 0;
+    is->whisper_decode_abort = 0;
+    is->whisper_read_abort = 0;
+    is->whisper_eof = 0;
+    is->whisper_enabled = 1;
+
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", 
+        "[Whisper-Stream] Starting from position: %.3f seconds", current_pos);
+#endif
+
+    // 初始化音频包队列
+    ret = packet_queue_init(&is->whisper_audioq);
+    if (ret < 0) {
+        return ret;
+    }
+    packet_queue_start(&is->whisper_audioq);
+
+    // 创建读取线程条件变量
+    is->whisper_read_cond = SDL_CreateCondition();
+    if (!is->whisper_read_cond) {
+        packet_queue_destroy(&is->whisper_audioq);
+        return AVERROR(ENOMEM);
+    }
+
+    // 启动读取线程
+    is->whisper_read_tid = SDL_CreateThread(whisper_read_thread, "whisper_read", is);
+    if (!is->whisper_read_tid) {
+        SDL_DestroyCondition(is->whisper_read_cond);
+        is->whisper_read_cond = NULL;
+        packet_queue_destroy(&is->whisper_audioq);
+        return AVERROR(ENOMEM);
+    }
+
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", 
+        "[Whisper-Stream] Independent decode stream started");
+#endif
+
+    return 0;
+}
+
+/**
+ * 同步 Whisper 解码流到指定位置
+ * 当主播放器 Seek 时调用，让 Whisper 解码流也跳转到对应位置
+ */
+static void whisper_stream_seek(VideoState *is, int64_t pos)
+{
+    if (!is->whisper_enabled || !is->whisper_read_tid) {
+        return;
+    }
+
+    // Seek 后将 Whisper 解码位置偏移 +15s（whisper_max_lead_time）
+    // 这样 Whisper 从 pos + 15s 开始解码推理，当播放到该位置时字幕已准备好
+    int64_t boosted_pos = pos + (int64_t)(is->whisper_max_lead_time * AV_TIME_BASE);
+    is->whisper_seek_pos = boosted_pos;
+    is->whisper_seek_flags = 0;
+    is->whisper_seek_req = 1;
+
+    // 唤醒读取线程
+    if (is->whisper_read_cond) {
+        SDL_SignalCondition(is->whisper_read_cond);
+    }
+
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", 
+        "[Whisper-Stream] Seek requested: play_pos=%.3f, whisper_start=%.3f (+%.0fs boost)", 
+        pos / (double)AV_TIME_BASE, boosted_pos / (double)AV_TIME_BASE, is->whisper_max_lead_time);
+#endif
+}
+
+/* ==================== 独立 Whisper 解码流结束 ==================== */
+
+/**
+ * Whisper 处理线程
+ * 从队列中取出音频帧，送入 Whisper 滤镜处理，提取字幕
+ * 
+ * 所有帧按顺序处理，不跳帧，确保字幕完整输出
+ * 通过解码线程的节流机制控制队列大小
+ */
+static int whisper_thread(void *arg)
+{
+    VideoState *is = arg;
+    AVFrame *frame = av_frame_alloc();
+    AVFrame *out_frame = av_frame_alloc();
+    int ret;
+    
+    // 预缓冲完成标志：当收到第一条字幕时发送预缓冲完成消息
+    int prebuffer_complete_sent = 0;
+    int subtitle_count = 0;
+
+    if (!frame || !out_frame) {
+        av_frame_free(&frame);
+        av_frame_free(&out_frame);
+        return AVERROR(ENOMEM);
+    }
+
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper-Async] Whisper thread started, no frame skipping");
+#endif
+
+    while (!is->whisper_abort) {
+        // 等待队列中有数据
+        SDL_LockMutex(is->whisper_mutex);
+        while (!is->whisper_abort && av_fifo_can_read(is->whisper_frame_queue) == 0) {
+            SDL_WaitCondition(is->whisper_cond, is->whisper_mutex);
+        }
+        
+        if (is->whisper_abort) {
+            SDL_UnlockMutex(is->whisper_mutex);
+            break;
+        }
+
+        // 记录当前队列大小用于调试
+        size_t queue_size = av_fifo_can_read(is->whisper_frame_queue);
+        static int process_count = 0;
+        process_count++;
+        
+        // 每 100 帧打印一次队列状态
+        if (process_count % 100 == 0) {
+#ifdef __ANDROID__
+            __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", 
+                "[Whisper-Async] Processing frame %d, queue_size=%zu",
+                process_count, queue_size);
+#endif
+        }
+
+        // 从队列中取出帧（不再跳帧，按顺序处理所有帧）
+        AVFrame *queued_frame = NULL;
+        if (av_fifo_read(is->whisper_frame_queue, &queued_frame, 1) < 0) {
+            SDL_UnlockMutex(is->whisper_mutex);
+            continue;
+        }
+        SDL_UnlockMutex(is->whisper_mutex);
+
+        if (!queued_frame)
+            continue;
+
+        // 检查是否需要重新配置滤镜图
+        if (!is->whisper_agraph ||
+            is->whisper_filter_src.freq != queued_frame->sample_rate ||
+            is->whisper_filter_src.fmt != queued_frame->format ||
+            av_channel_layout_compare(&is->whisper_filter_src.ch_layout, &queued_frame->ch_layout)) {
+            
+            is->whisper_filter_src.freq = queued_frame->sample_rate;
+            is->whisper_filter_src.fmt = queued_frame->format;
+            av_channel_layout_copy(&is->whisper_filter_src.ch_layout, &queued_frame->ch_layout);
+
+            // 获取当前的 whisper 滤镜配置
+            char *whisper_filter = NULL;
+            SDL_LockMutex(is->audio_filter_mutex);
+            if (is->audio_filters) {
+                whisper_filter = extract_whisper_filter(is->audio_filters);
+            }
+            SDL_UnlockMutex(is->audio_filter_mutex);
+
+            if (whisper_filter) {
+                ret = configure_whisper_filters(is, whisper_filter);
+                av_free(whisper_filter);
+                if (ret < 0) {
+#ifdef __ANDROID__
+                    __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", "[Whisper-Async] Failed to configure whisper filters: %d", ret);
+#endif
+                    av_frame_free(&queued_frame);
+                    continue;
+                }
+            }
+        }
+
+        // 记录当前帧的 PTS（用于 PTS 同步）
+        // PTS 单位是音频流的 time_base，需要转换为秒
+        int64_t frame_pts = queued_frame->pts;
+        int sample_rate = queued_frame->sample_rate > 0 ? queued_frame->sample_rate : 44100;
+        // 将 PTS 转换为秒（PTS 单位是 1/sample_rate）
+        double start_time = (double)frame_pts / sample_rate;
+        
+        // 更新当前处理的 PTS
+        is->whisper_current_pts = frame_pts;
+
+        // 送入滤镜处理
+        if (is->whisper_in_filter) {
+            ret = av_buffersrc_add_frame(is->whisper_in_filter, queued_frame);
+            if (ret < 0) {
+#ifdef __ANDROID__
+                __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", "[Whisper-Async] av_buffersrc_add_frame failed: %d", ret);
+#endif
+            }
+        }
+        av_frame_free(&queued_frame);
+
+        // 从滤镜获取输出帧并检查字幕
+        if (is->whisper_out_filter) {
+            while ((ret = av_buffersink_get_frame_flags(is->whisper_out_filter, out_frame, 0)) >= 0) {
+                // 检查 Whisper 字幕元数据
+                if (out_frame->metadata) {
+                    AVDictionaryEntry *entry = av_dict_get(out_frame->metadata, "lavfi.whisper.text", NULL, 0);
+                    if (entry && entry->value && entry->value[0] != '\0') {
+                        // 计算字幕的结束时间
+                        // Whisper 滤镜的 queue 参数是 6s，所以字幕持续时间约为 6 秒
+                        // 但实际字幕可能更短，这里使用固定的 6 秒作为估计
+                        double end_time = start_time + 6.0;
+                        
+                        // 增加字幕计数
+                        subtitle_count++;
+                        
+                        // 获取主时钟时间，计算字幕延迟
+                        double master_clock = get_master_clock(is);
+                        double subtitle_delay = start_time - master_clock;
+                        
+#ifdef __ANDROID__
+                        __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", 
+                            "[Whisper-Async] Got subtitle: %s, start_time=%.3f, end_time=%.3f, master_clock=%.3f, delay=%.3fs, count=%d",
+                            entry->value, start_time, end_time, master_clock, subtitle_delay, subtitle_count);
+#endif
+                        // 调用带 PTS 的字幕回调
+                        sky_post_whisper_subtitle_with_pts(is->skyPlayer, entry->value, start_time, end_time);
+                        
+                        // 收到第一条字幕时，发送预缓冲完成消息
+                        if (!prebuffer_complete_sent) {
+                            prebuffer_complete_sent = 1;
+#ifdef __ANDROID__
+                            __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", 
+                                "[Whisper-Async] First subtitle received, sending prebuffer complete message");
+#endif
+                            sky_post_whisper_prebuffer_complete(is->skyPlayer, subtitle_count);
+                        }
+                    }
+                }
+                av_frame_unref(out_frame);
+            }
+        }
+    }
+
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper-Async] Whisper thread exiting");
+#endif
+
+    av_frame_free(&frame);
+    av_frame_free(&out_frame);
+    return 0;
+}
+
+/**
+ * 启动异步 Whisper 处理线程
+ * 同时启动独立的 Whisper 解码流，实现超前解码
+ */
+static int start_whisper_thread(VideoState *is)
+{
+    int ret;
+    
+    if (is->whisper_tid) {
+        // 已经启动
+        return 0;
+    }
+
+    // 创建帧队列（最多缓存 1024 帧，约 23 秒的音频 @ 44100Hz/1024samples）
+    // Whisper 推理较慢，需要足够大的缓冲区
+    is->whisper_frame_queue = av_fifo_alloc2(1024, sizeof(AVFrame*), 0);
+    if (!is->whisper_frame_queue) {
+        return AVERROR(ENOMEM);
+    }
+
+    is->whisper_mutex = SDL_CreateMutex();
+    if (!is->whisper_mutex) {
+        av_fifo_freep2(&is->whisper_frame_queue);
+        return AVERROR(ENOMEM);
+    }
+
+    is->whisper_cond = SDL_CreateCondition();
+    if (!is->whisper_cond) {
+        SDL_DestroyMutex(is->whisper_mutex);
+        av_fifo_freep2(&is->whisper_frame_queue);
+        return AVERROR(ENOMEM);
+    }
+
+    is->whisper_abort = 0;
+    
+    // 启动 Whisper 滤镜处理线程
+    is->whisper_tid = SDL_CreateThread(whisper_thread, "whisper_thread", is);
+    if (!is->whisper_tid) {
+        SDL_DestroyCondition(is->whisper_cond);
+        SDL_DestroyMutex(is->whisper_mutex);
+        av_fifo_freep2(&is->whisper_frame_queue);
+        return AVERROR(ENOMEM);
+    }
+
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper-Async] Whisper filter thread started");
+#endif
+
+    // 启动独立的 Whisper 解码流（超前解码方案）
+    ret = start_whisper_decode_stream(is);
+    if (ret < 0) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_WARN, "SkyPlayer", 
+            "[Whisper-Async] Failed to start decode stream: %d, falling back to sync mode", ret);
+#endif
+        // 独立解码流启动失败不影响主流程，继续使用同步模式
+    }
+
+    return 0;
+}
+
+/**
+ * 将音频帧送入 Whisper 处理队列
+ * 帧会被复制，调用者仍然拥有原始帧
+ * 先复制帧，再获取锁，最小化锁持有时间
+ * 
+ * 注意：由于 Whisper 推理速度较慢，我们不需要每帧都送入
+ * 队列会自动丢弃旧帧，确保 Whisper 处理的是最新的音频
+ */
+static void feed_whisper_frame(VideoState *is, AVFrame *frame)
+{
+    if (!is->whisper_tid || !is->whisper_frame_queue || !is->whisper_mutex)
+        return;
+
+    // 调试日志：打印音频帧格式（每 100 帧打印一次）
+    static int feed_count = 0;
+    static int queued_count = 0;
+    static int drop_count = 0;
+    feed_count++;
+    
+    if (feed_count % 100 == 0) {
+#ifdef __ANDROID__
+        char ch_layout_str[64];
+        av_channel_layout_describe(&frame->ch_layout, ch_layout_str, sizeof(ch_layout_str));
+        __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", 
+            "[Whisper-Async] feed_whisper_frame: count=%d, queued=%d, dropped=%d, sample_rate=%d, format=%s, channels=%d, layout=%s, nb_samples=%d, pts=%lld",
+            feed_count, queued_count, drop_count, frame->sample_rate, av_get_sample_fmt_name(frame->format),
+            frame->ch_layout.nb_channels, ch_layout_str, frame->nb_samples, (long long)frame->pts);
+#endif
+    }
+
+    // 先复制帧（在锁外进行，避免阻塞）
+    AVFrame *frame_copy = av_frame_clone(frame);
+    if (!frame_copy)
+        return;
+    
+    // 获取锁，快速入队
+    SDL_LockMutex(is->whisper_mutex);
+    
+    // 检查队列是否有空间，如果满了就丢弃新帧（而不是旧帧）
+    // 这样可以保证 Whisper 处理的是连续的音频片段
+    if (av_fifo_can_write(is->whisper_frame_queue) == 0) {
+        // 队列满了，丢弃新帧
+        SDL_UnlockMutex(is->whisper_mutex);
+        av_frame_free(&frame_copy);
+        drop_count++;
+        if (drop_count % 500 == 0) {
+#ifdef __ANDROID__
+            __android_log_print(ANDROID_LOG_WARN, "SkyPlayer", 
+                "[Whisper-Async] Queue full, dropped new frame: total=%d, queue_size=%zu",
+                drop_count, (size_t)1024);
+#endif
+        }
+        return;
+    }
+    
+    av_fifo_write(is->whisper_frame_queue, &frame_copy, 1);
+    queued_count++;
+    SDL_SignalCondition(is->whisper_cond);
+    
+    SDL_UnlockMutex(is->whisper_mutex);
+}
+
+/* ==================== 异步 Whisper 处理结束 ==================== */
+
 static int configure_audio_filters(VideoState *is, const char *afilters, int force_output_format)
 {
-    int sample_rates[2] = { 0, -1 };
     AVFilterContext *filt_asrc = NULL, *filt_asink = NULL;
     char aresample_swr_opts[512] = "";
     const AVDictionaryEntry *e = NULL;
     AVBPrint bp;
     char asrc_args[256];
     int ret;
+
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper] configure_audio_filters start, afilters: %s", afilters ? afilters : "(null)");
+#endif
 
     avfilter_graph_free(&is->agraph);
     if (!(is->agraph = avfilter_graph_alloc()))
@@ -1703,38 +2651,104 @@ static int configure_audio_filters(VideoState *is, const char *afilters, int for
                    is->audio_filter_src.freq, av_get_sample_fmt_name(is->audio_filter_src.fmt),
                    1, is->audio_filter_src.freq, bp.str);
 
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper] abuffer args: %s", asrc_args);
+#endif
+
+    // 使用 avfilter_graph_create_filter 创建 abuffer 滤镜（与 FFmpeg 8.0 官方实现一致）
     ret = avfilter_graph_create_filter(&filt_asrc,
                                        avfilter_get_by_name("abuffer"), "ffplay_abuffer",
                                        asrc_args, NULL, is->agraph);
-    if (ret < 0)
+    if (ret < 0) {
+#ifdef __ANDROID__
+        char errbuf[256];
+        av_strerror(ret, errbuf, sizeof(errbuf));
+        __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", "[Whisper] abuffer create failed: %d (%s)", ret, errbuf);
+#endif
         goto end;
+    }
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper] abuffer created successfully");
+#endif
 
-    ret = avfilter_graph_create_filter(&filt_asink,
-                                       avfilter_get_by_name("abuffersink"), "ffplay_abuffersink",
-                                       NULL, NULL, is->agraph);
-    if (ret < 0)
+    // 使用 avfilter_graph_alloc_filter 创建 abuffersink 滤镜（与 FFmpeg 8.0 官方实现一致）
+    filt_asink = avfilter_graph_alloc_filter(is->agraph, avfilter_get_by_name("abuffersink"),
+                                             "ffplay_abuffersink");
+    if (!filt_asink) {
+        ret = AVERROR(ENOMEM);
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", "[Whisper] abuffersink alloc failed");
+#endif
         goto end;
-
-    if ((ret = av_opt_set_int_list(filt_asink, "sample_fmts", sample_fmts,  AV_SAMPLE_FMT_NONE, AV_OPT_SEARCH_CHILDREN)) < 0)
-        goto end;
-    if ((ret = av_opt_set_int(filt_asink, "all_channel_counts", 1, AV_OPT_SEARCH_CHILDREN)) < 0)
-        goto end;
-
-    if (force_output_format) {
-        sample_rates   [0] = is->audio_tgt.freq;
-        if ((ret = av_opt_set_int(filt_asink, "all_channel_counts", 0, AV_OPT_SEARCH_CHILDREN)) < 0)
-            goto end;
-        if ((ret = av_opt_set_int_list(filt_asink, "sample_rates"   ,  sample_rates   ,  -1, AV_OPT_SEARCH_CHILDREN)) < 0)
-            goto end;
-        if ((ret = av_opt_set_chlayout(filt_asink, "ch_layouts", &is->audio_tgt.ch_layout, AV_OPT_SEARCH_CHILDREN)) < 0)
-            goto end;
     }
 
-    if ((ret = configure_filtergraph(is->agraph, afilters, filt_asrc, filt_asink)) < 0)
+    // 设置 sample_formats 为 "s16"（与 FFmpeg 8.0 官方实现一致）
+    if ((ret = av_opt_set(filt_asink, "sample_formats", "s16", AV_OPT_SEARCH_CHILDREN)) < 0) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", "[Whisper] av_opt_set sample_formats failed: %d", ret);
+#endif
         goto end;
+    }
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper] abuffersink sample_formats set to s16");
+#endif
+
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper] force_output_format=%d", force_output_format);
+#endif
+
+    if (force_output_format) {
+        // 使用 av_opt_set_array 设置 channel_layouts（与 FFmpeg 8.0 官方实现一致）
+        if ((ret = av_opt_set_array(filt_asink, "channel_layouts", AV_OPT_SEARCH_CHILDREN,
+                                    0, 1, AV_OPT_TYPE_CHLAYOUT, &is->audio_tgt.ch_layout)) < 0) {
+#ifdef __ANDROID__
+            __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", "[Whisper] av_opt_set_array channel_layouts failed: %d", ret);
+#endif
+            goto end;
+        }
+        // 使用 av_opt_set_array 设置 samplerates（与 FFmpeg 8.0 官方实现一致）
+        if ((ret = av_opt_set_array(filt_asink, "samplerates", AV_OPT_SEARCH_CHILDREN,
+                                    0, 1, AV_OPT_TYPE_INT, &is->audio_tgt.freq)) < 0) {
+#ifdef __ANDROID__
+            __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", "[Whisper] av_opt_set_array samplerates failed: %d", ret);
+#endif
+            goto end;
+        }
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper] force_output_format: channel_layouts and samplerates set");
+#endif
+    }
+
+    // 初始化 abuffersink 滤镜
+    ret = avfilter_init_dict(filt_asink, NULL);
+    if (ret < 0) {
+#ifdef __ANDROID__
+        char errbuf[256];
+        av_strerror(ret, errbuf, sizeof(errbuf));
+        __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", "[Whisper] abuffersink init failed: %d (%s)", ret, errbuf);
+#endif
+        goto end;
+    }
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper] abuffersink created successfully");
+#endif
+
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper] Calling configure_filtergraph with filter: %s", afilters ? afilters : "(null)");
+#endif
+
+    if ((ret = configure_filtergraph(is->agraph, afilters, filt_asrc, filt_asink)) < 0) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", "[Whisper] configure_filtergraph failed: %d, filter: %s", ret, afilters ? afilters : "(null)");
+#endif
+        goto end;
+    }
 
     is->in_audio_filter  = filt_asrc;
     is->out_audio_filter = filt_asink;
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper] Audio filter graph configured successfully");
+#endif
 
 end:
     if (ret < 0)
@@ -1893,19 +2907,93 @@ static int audio_thread(void *arg)
     int got_frame = 0;
     AVRational tb;
     int ret = 0;
+    char *current_afilters = NULL;  // 当前使用的滤镜副本
 
     if (!frame)
         return AVERROR(ENOMEM);
 
     do {
+        // 检查动态滤镜变更
+        static int use_async_whisper = 0;  // 是否使用异步 Whisper 处理
+        if (is->audio_filter_mutex) {
+            SDL_LockMutex(is->audio_filter_mutex);
+            if (is->audio_filter_changed) {
+                is->audio_filter_changed = 0;
+                av_freep(&current_afilters);
+                if (is->audio_filters) {
+                    current_afilters = av_strdup(is->audio_filters);
+                }
+                av_log(NULL, AV_LOG_INFO, "Audio filter changed to: %s\n",
+                       current_afilters ? current_afilters : "(none)");
+                
+                // 检查是否包含 whisper 滤镜，如果是则使用异步处理
+                if (contains_whisper_filter(current_afilters)) {
+                    use_async_whisper = 1;
+#ifdef __ANDROID__
+                    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper-Async] Detected whisper filter, enabling async processing");
+#endif
+                    // 启动异步 Whisper 处理线程
+                    if (!is->whisper_tid) {
+                        start_whisper_thread(is);
+                    }
+                    // 清除主滤镜图（不再使用同步 whisper）
+                    if (is->agraph) {
+                        avfilter_graph_free(&is->agraph);
+                        is->in_audio_filter = NULL;
+                        is->out_audio_filter = NULL;
+                    }
+                } else {
+                    use_async_whisper = 0;
+                    // 强制重新配置滤镜
+                    if (is->in_audio_filter && is->out_audio_filter) {
+                        is->audio_filter_src.freq = 0;  // 触发重新配置
+                    }
+                }
+            }
+            SDL_UnlockMutex(is->audio_filter_mutex);
+        }
+
         if ((got_frame = decoder_decode_frame(&is->auddec, frame, NULL)) < 0)
             goto the_end;
 
         if (got_frame) {
             tb = (AVRational){1, frame->sample_rate};
 
-            // 检查是否使用滤镜系统
-            if (is->in_audio_filter && is->out_audio_filter) {
+            // 如果使用异步 Whisper 处理且独立解码流未启用，将帧送入 Whisper 队列
+            // 注意：当独立解码流启用时，Whisper 从独立解码流获取音频帧，不需要从主解码流获取
+            if (use_async_whisper && is->whisper_tid && !is->whisper_enabled) {
+                feed_whisper_frame(is, frame);
+            }
+
+            // 检查是否需要初始化滤镜系统（动态滤镜设置时，但不包括 whisper 滤镜）
+            static int filter_init_failed = 0;  // 标记滤镜初始化是否失败过
+            if (!is->in_audio_filter && !is->out_audio_filter && current_afilters && !filter_init_failed && !use_async_whisper) {
+#ifdef __ANDROID__
+                __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper] Initializing audio filter system with: %s", current_afilters);
+#endif
+                // 初始化滤镜源参数
+                is->audio_filter_src.fmt = frame->format;
+                av_channel_layout_copy(&is->audio_filter_src.ch_layout, &frame->ch_layout);
+                is->audio_filter_src.freq = frame->sample_rate;
+                last_serial = is->auddec.pkt_serial;
+
+                // 配置滤镜
+                int filter_ret = configure_audio_filters(is, current_afilters, 1);
+                if (filter_ret < 0) {
+#ifdef __ANDROID__
+                    __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", "[Whisper] Failed to initialize audio filters: %d, falling back to direct path", filter_ret);
+#endif
+                    // 滤镜初始化失败，标记失败，继续使用直接路径（不影响音频播放）
+                    filter_init_failed = 1;
+                } else {
+#ifdef __ANDROID__
+                    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper] Audio filter system initialized successfully");
+#endif
+                }
+            }
+
+            // 检查是否使用滤镜系统（异步 Whisper 模式下不使用主滤镜图）
+            if (is->in_audio_filter && is->out_audio_filter && !use_async_whisper) {
                 // 使用滤镜系统的路径
                 reconfigure =
                     cmp_audio_fmts(is->audio_filter_src.fmt, is->audio_filter_src.ch_layout.nb_channels,
@@ -1930,16 +3018,55 @@ static int audio_thread(void *arg)
                     is->audio_filter_src.freq           = frame->sample_rate;
                     last_serial                         = is->auddec.pkt_serial;
 
-                    if ((ret = configure_audio_filters(is, afilters, 1)) < 0)
+                    // 使用动态滤镜或全局滤镜
+                    const char *filters_to_use = current_afilters ? current_afilters : afilters;
+#ifdef __ANDROID__
+                    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper] Configuring audio filters: %s", filters_to_use ? filters_to_use : "(null)");
+#endif
+                    if ((ret = configure_audio_filters(is, filters_to_use, 1)) < 0) {
+#ifdef __ANDROID__
+                        __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", "[Whisper] Failed to configure audio filters: %d", ret);
+#endif
                         goto the_end;
+                    }
+#ifdef __ANDROID__
+                    __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper] Audio filters configured successfully");
+#endif
                 }
 
-                if ((ret = av_buffersrc_add_frame(is->in_audio_filter, frame)) < 0)
+                if ((ret = av_buffersrc_add_frame(is->in_audio_filter, frame)) < 0) {
+#ifdef __ANDROID__
+                    __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", "[Whisper] av_buffersrc_add_frame failed: %d", ret);
+#endif
                     goto the_end;
+                }
 
+                int frame_count = 0;
                 while ((ret = av_buffersink_get_frame_flags(is->out_audio_filter, frame, 0)) >= 0) {
+                    frame_count++;
                     FrameData *fd = frame->opaque_ref ? (FrameData*)frame->opaque_ref->data : NULL;
                     tb = av_buffersink_get_time_base(is->out_audio_filter);
+
+                    // 检查 Whisper 字幕元数据
+                    if (frame->metadata) {
+                        AVDictionaryEntry *entry = av_dict_get(frame->metadata, "lavfi.whisper.text", NULL, 0);
+                        if (entry && entry->value && entry->value[0] != '\0') {
+                            // 发送字幕消息到 Java 层
+#ifdef __ANDROID__
+                            __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "[Whisper] Got subtitle: %s", entry->value);
+#endif
+                            sky_post_whisper_subtitle(is->skyPlayer, entry->value);
+                        }
+                    } else {
+                        // 调试：检查是否有 metadata
+                        static int metadata_check_count = 0;
+                        if (metadata_check_count++ % 500 == 0) {
+#ifdef __ANDROID__
+                            __android_log_print(ANDROID_LOG_DEBUG, "SkyPlayer", "[Whisper] Audio frame has no metadata (count=%d)", metadata_check_count);
+#endif
+                        }
+                    }
+
                     if (!(af = frame_queue_peek_writable(&is->sampq)))
                         goto the_end;
 
@@ -1960,6 +3087,11 @@ static int audio_thread(void *arg)
                         break;
                     }
                 }
+#ifdef __ANDROID__
+                if (frame_count == 0 && ret != AVERROR(EAGAIN)) {
+                    __android_log_print(ANDROID_LOG_WARN, "SkyPlayer", "[Whisper] av_buffersink_get_frame_flags returned no frames, ret=%d", ret);
+                }
+#endif
                 if (ret == AVERROR_EOF)
                     is->auddec.finished = is->auddec.pkt_serial;
             } else {
@@ -1988,6 +3120,7 @@ static int audio_thread(void *arg)
         }
     } while (ret >= 0 || ret == AVERROR(EAGAIN) || ret == AVERROR_EOF);
  the_end:
+    av_freep(&current_afilters);  // 释放动态滤镜副本
     if (is->agraph)
         avfilter_graph_free(&is->agraph);
     av_frame_free(&frame);
@@ -2761,25 +3894,26 @@ static int read_thread(void *arg)
         scan_all_pmts_set = 1;
     }
 
-    // ========== 网络播放参数配置 (方案A) ==========
+    // ========== 网络播放参数配置 ==========
     // 只对网络协议（http/https/rtmp/rtsp等）设置网络选项
     if (strstr(is->filename, "://") != NULL &&
         (strncmp(is->filename, "http://", 7) == 0 ||
          strncmp(is->filename, "https://", 8) == 0 ||
          strncmp(is->filename, "rtmp://", 7) == 0 ||
          strncmp(is->filename, "rtsp://", 7) == 0)) {
-        // 1. 超时配置
+        // 1. 超时配置（demuxer 级别选项，会被 avformat_open_input 消费）
         av_dict_set(&format_opts, "timeout", "5000000", 0);        // 连接超时 5秒 (微秒)
         av_dict_set(&format_opts, "rw_timeout", "10000000", 0);    // 读写超时 10秒 (微秒)
 
-        // 2. 缓冲配置
+        // 2. 缓冲配置（demuxer 级别选项）
         av_dict_set(&format_opts, "max_delay", "500000", 0);       // 最大延迟 500ms (微秒)
 
-        // 3. HTTP/HTTPS 配置
+        // 3. HTTP/HTTPS 协议层选项
+        //    这些选项会被 avformat_open_input 透传给底层 AVIO 协议处理器
         av_dict_set(&format_opts, "user_agent", "SkyPlayer/1.0 (Android)", 0);
-        av_dict_set(&format_opts, "reconnect", "1", 0);            // 启用自动重连
-        av_dict_set(&format_opts, "reconnect_streamed", "1", 0);   // 流媒体重连
-        av_dict_set(&format_opts, "reconnect_delay_max", "5", 0);  // 最大重连延迟 5秒
+        av_dict_set(&format_opts, "reconnect", "1", 0);
+        av_dict_set(&format_opts, "reconnect_streamed", "1", 0);
+        av_dict_set(&format_opts, "reconnect_delay_max", "5", 0);
 
         av_log(NULL, AV_LOG_INFO, "Network options configured for: %s\n", is->filename);
     }
@@ -2802,9 +3936,9 @@ static int read_thread(void *arg)
         av_dict_set(&format_opts, "scan_all_pmts", NULL, AV_DICT_MATCH_CASE);
 
     if ((t = av_dict_get(format_opts, "", NULL, AV_DICT_IGNORE_SUFFIX))) {
-        av_log(NULL, AV_LOG_ERROR, "Option %s not found.\n", t->key);
-        ret = AVERROR_OPTION_NOT_FOUND;
-        goto fail;
+        // 降级为 warning：网络协议层选项（如 reconnect、user_agent 等）不会被 demuxer 消费，
+        // 但已被 avformat_open_input 内部透传给 AVIO 层，残留在 format_opts 中属于正常现象
+        av_log(NULL, AV_LOG_WARNING, "Option %s not consumed by demuxer (may be protocol-level option).\n", t->key);
     }
     is->ic = ic;
 
@@ -2991,6 +4125,9 @@ static int read_thread(void *arg)
                 } else {
                    set_clock(&is->extclk, seek_target / (double)AV_TIME_BASE, 0);
                 }
+
+                // 同步 Whisper 解码流到新位置
+                whisper_stream_seek(is, seek_target);
 
                 // 发送seek完成消息
                 sky_post_message_ii(is->skyPlayer, SKY_MSG_SEEK_COMPLETE, seek_target, ret);
@@ -3235,6 +4372,47 @@ VideoState *stream_open(const char *filename,
     // 初始化刷新线程字段
     is->refresh_tid = NULL;
     is->refresh_thread_abort = 0;
+
+    // 初始化动态音频滤镜字段
+    is->audio_filters = NULL;
+    is->audio_filter_mutex = SDL_CreateMutex();
+    if (!is->audio_filter_mutex) {
+        av_log(NULL, AV_LOG_FATAL, "SDL_CreateMutex(): %s\n", SDL_GetError());
+        goto fail;
+    }
+    is->audio_filter_changed = 0;
+
+    // 初始化异步 Whisper 处理字段
+    is->whisper_tid = NULL;
+    is->whisper_abort = 0;
+    is->whisper_agraph = NULL;
+    is->whisper_in_filter = NULL;
+    is->whisper_out_filter = NULL;
+    is->whisper_frame_queue = NULL;
+    is->whisper_mutex = NULL;
+    is->whisper_cond = NULL;
+    memset(&is->whisper_filter_src, 0, sizeof(is->whisper_filter_src));
+
+    // 初始化独立 Whisper 解码流字段
+    is->whisper_ic = NULL;
+    is->whisper_avctx = NULL;
+    memset(&is->whisper_audioq, 0, sizeof(is->whisper_audioq));
+    is->whisper_audio_stream = -1;
+    is->whisper_audio_st = NULL;
+    is->whisper_read_tid = NULL;
+    is->whisper_decode_tid = NULL;
+    is->whisper_read_cond = NULL;
+    is->whisper_decode_pts = 0;
+    is->whisper_lead_time = 10.0;
+    is->whisper_min_lead_time = 5.0;
+    is->whisper_max_lead_time = 15.0;
+    is->whisper_seek_req = 0;
+    is->whisper_seek_pos = 0;
+    is->whisper_seek_flags = 0;
+    is->whisper_decode_abort = 0;
+    is->whisper_read_abort = 0;
+    is->whisper_eof = 0;
+    is->whisper_enabled = 0;
 
     is->read_tid     = SDL_CreateThread(read_thread, "read_thread", is);
     if (!is->read_tid) {
@@ -3585,4 +4763,58 @@ void show_help_default(const char *opt, const char *arg)
            "right mouse click   seek to percentage in file corresponding to fraction of width\n"
            "left double-click   toggle full screen\n"
            );
+}
+
+/**
+ * 设置动态音频滤镜
+ * 线程安全，可以在播放过程中动态切换滤镜
+ */
+int set_audio_filters(VideoState *is, const char *filters)
+{
+    if (!is) {
+        av_log(NULL, AV_LOG_ERROR, "set_audio_filters: VideoState is NULL\n");
+        return AVERROR(EINVAL);
+    }
+
+    if (!is->audio_filter_mutex) {
+        av_log(NULL, AV_LOG_ERROR, "set_audio_filters: audio_filter_mutex is NULL\n");
+        return AVERROR(EINVAL);
+    }
+
+    SDL_LockMutex(is->audio_filter_mutex);
+
+    // 释放旧的滤镜字符串
+    av_freep(&is->audio_filters);
+
+    // 设置新的滤镜字符串
+    if (filters && filters[0] != '\0') {
+        is->audio_filters = av_strdup(filters);
+        if (!is->audio_filters) {
+            SDL_UnlockMutex(is->audio_filter_mutex);
+            av_log(NULL, AV_LOG_ERROR, "set_audio_filters: Failed to allocate memory for filters\n");
+            return AVERROR(ENOMEM);
+        }
+        av_log(NULL, AV_LOG_INFO, "set_audio_filters: Setting audio filter to: %s\n", filters);
+    } else {
+        av_log(NULL, AV_LOG_INFO, "set_audio_filters: Clearing audio filter\n");
+    }
+
+    // 设置变更标志，通知 audio_thread 重新配置滤镜
+    is->audio_filter_changed = 1;
+
+    // 如果是 whisper 滤镜，直接启动 Whisper 线程
+    // 这样即使视频暂停，Whisper 也能立即开始工作
+    if (filters && contains_whisper_filter(filters)) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", 
+            "[Whisper] Detected whisper filter in set_audio_filters, starting whisper thread immediately");
+#endif
+        if (!is->whisper_tid) {
+            start_whisper_thread(is);
+        }
+    }
+
+    SDL_UnlockMutex(is->audio_filter_mutex);
+
+    return 0;
 }

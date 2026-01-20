@@ -1,6 +1,5 @@
 package imt.zw.skymediaplayer.widget
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.net.Uri
 import android.os.Handler
@@ -8,29 +7,37 @@ import android.os.Looper
 import android.text.TextUtils
 import android.util.AttributeSet
 import android.util.Log
+import android.util.TypedValue
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.SurfaceHolder
-import android.view.View
 import android.widget.FrameLayout
-import android.widget.MediaController
 import imt.zw.skymediaplayer.audio.AudioFocusManager
 import imt.zw.skymediaplayer.player.IMediaPlayer
 import imt.zw.skymediaplayer.player.SkyMediaPlayer
 import imt.zw.skymediaplayer.utils.Utils
+import imt.zw.skymediaplayer.widget.control.OnSubtitleSettingsChangeListener
+import imt.zw.skymediaplayer.widget.control.PlayerControl
+import imt.zw.skymediaplayer.widget.control.SkyPlayerOverlay
+import imt.zw.skymediaplayer.widget.control.SubtitleSettings
 
 const val TAG: String = "SkyVideoView"
 
 class SkyVideoView(context: Context,
                    attrs: AttributeSet ?= null,
                    defStyleAttr: Int = 0)
-    : FrameLayout(context, attrs, defStyleAttr), MediaController.MediaPlayerControl {
+    : FrameLayout(context, attrs, defStyleAttr), PlayerControl {
 
     private var _localVideoPath: String ?= null
     private var _videoUri: Uri? = null
-    private var _mediaController: MediaController ?= null
     private var _mediaPlayer: IMediaPlayer?= null
     private var _surfaceRenderView: SurfaceRenderView?= null
+
+    // 播放器交互覆盖层（包含字幕和播控）
+    private var _playerOverlay: SkyPlayerOverlay? = null
+
+    // Whisper 字幕状态
+    private var _isWhisperEnabled: Boolean = false
+    private var _whisperModelPath: String? = null
 
     // 音频焦点管理器
     private var _audioFocusManager: AudioFocusManager? = null
@@ -52,6 +59,7 @@ class SkyVideoView(context: Context,
     }
 
     private fun initVideoView(context: Context) {
+        // Layer 1: 视频渲染层
         _surfaceRenderView = SurfaceRenderView(context, object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 Log.i(TAG, "surfaceCreated")
@@ -73,18 +81,43 @@ class SkyVideoView(context: Context,
 
             override fun surfaceDestroyed(holder: SurfaceHolder) {
                 Log.i(TAG, "surfaceDestroyed")
-                // Surface被销毁时，需要通知底层释放渲染资源
-                // 但不要释放整个MediaPlayer，因为我们需要保持播放状态
                 _mediaPlayer?.setDisplay(null)
             }
         })
 
-        val lp = LayoutParams(
+        val surfaceLp = LayoutParams(
             LayoutParams.WRAP_CONTENT,
             LayoutParams.WRAP_CONTENT,
             Gravity.CENTER
         )
-        addView(_surfaceRenderView, lp)
+        addView(_surfaceRenderView, surfaceLp)
+
+        // Layer 2: 交互覆盖层（包含字幕和播控）
+        initPlayerOverlay(context)
+    }
+
+    /**
+     * 初始化播放器交互覆盖层
+     */
+    private fun initPlayerOverlay(context: Context) {
+        _playerOverlay = SkyPlayerOverlay(context).apply {
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+            
+            // 设置播放器控制接口
+            setPlayerControl(this@SkyVideoView)
+        }
+        addView(_playerOverlay)
+    }
+
+    /**
+     * dp 转 px
+     */
+    private fun dpToPx(dp: Int): Int {
+        return TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            dp.toFloat(),
+            context.resources.displayMetrics
+        ).toInt()
     }
 
     /**
@@ -131,18 +164,39 @@ class SkyVideoView(context: Context,
         })
     }
 
-    fun setMediaController(mediaController: MediaController) {
-        _mediaController = mediaController;
+    /**
+     * 设置字幕设置变更监听器
+     */
+    fun setOnSubtitleSettingsChangeListener(listener: OnSubtitleSettingsChangeListener?) {
+        _playerOverlay?.setOnSubtitleSettingsChangeListener(listener)
     }
 
-    private fun attachMediaController() {
-        if (null != _mediaPlayer && null != _mediaController) {
-            _mediaController!!.setMediaPlayer(this);
-            val anchorView = (this.parent as? View) ?: this
-            _mediaController!!.setAnchorView(anchorView)
-        }
+    /**
+     * 获取当前字幕设置
+     */
+    fun getSubtitleSettings(): SubtitleSettings {
+        return _playerOverlay?.getSubtitleSettings() ?: SubtitleSettings.DEFAULT
+    }
 
-        _mediaController?.show(5000)
+    /**
+     * 设置字幕设置
+     */
+    fun setSubtitleSettings(settings: SubtitleSettings) {
+        _playerOverlay?.setSubtitleSettings(settings)
+    }
+
+    /**
+     * 显示播控栏
+     */
+    fun showControl() {
+        _playerOverlay?.showControl()
+    }
+
+    /**
+     * 隐藏播控栏
+     */
+    fun hideControl() {
+        _playerOverlay?.hideControl()
     }
 
     fun setVideoPath(path: String) {
@@ -187,28 +241,6 @@ class SkyVideoView(context: Context,
         _surfaceRenderView?.setScaleType(scaleType)
     }
 
-    /**
-     * 添加触摸事件处理，点击时切换播控显示/隐藏
-     */
-    @SuppressLint("ClickableViewAccessibility")
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        /**
-         * 系统播控有bug:
-         * show(timeOut)的时候抛了fakeOut定时任务，下次在Show()的时候，会在剩余倒计时到的时候移除播控
-         */
-        if (_mediaController != null && event.action == MotionEvent.ACTION_DOWN) {
-            if (_mediaController!!.isShowing) {
-                _mediaController!!.hide()
-                Log.d(TAG, "MediaController hidden by touch")
-            } else {
-                _mediaController!!.show(5000)
-                Log.d(TAG, "MediaController shown by touch for 5 seconds")
-            }
-            return true
-        }
-        return super.onTouchEvent(event)
-    }
-
     @Synchronized
     private fun openVideo() {
         if ((TextUtils.isEmpty(_localVideoPath) && _videoUri == null)
@@ -228,6 +260,7 @@ class SkyVideoView(context: Context,
         _mediaPlayer!!.setVideoSizeChangedListener(_onVideoSizeChangedListener)
         _mediaPlayer!!.setOnErrorListener(_onErrorListener)
         _mediaPlayer!!.setOnInfoListener(_onInfoListener)
+        // 注意：不再注册 OnSubtitleListener，字幕显示由外部通过 PTS 同步机制控制
 
         // 根据数据源类型设置不同的数据源
         if (_videoUri != null) {
@@ -334,26 +367,9 @@ class SkyVideoView(context: Context,
     }
 
     override fun getBufferPercentage(): Int {
-        // 返回缓冲百分比，如果没有缓冲信息则返回0
         return 0
     }
-
-    override fun canPause(): Boolean {
-        return _mediaPlayer != null
-    }
-
-    override fun canSeekBackward(): Boolean {
-        return _mediaPlayer != null
-    }
-
-    override fun canSeekForward(): Boolean {
-        return _mediaPlayer != null
-    }
-
-    override fun getAudioSessionId(): Int {
-        return _mediaPlayer?.getAudioSessionId() ?: 0
-    }
-    // MediaController.MediaPlayerControl 实现-end
+    // PlayerControl 实现-end
 
     /**
      * 释放资源
@@ -378,9 +394,9 @@ class SkyVideoView(context: Context,
         _surfaceRenderView?.release()
         _surfaceRenderView = null
 
-        // 5. 清理播控
-        _mediaController?.hide()
-        _mediaController = null
+        // 5. 清理播控覆盖层
+        _playerOverlay?.release()
+        _playerOverlay = null
 
         Log.d(TAG, "Complete resource release finished")
     }
@@ -393,21 +409,12 @@ class SkyVideoView(context: Context,
         override fun onPrepared(mp: IMediaPlayer) {
             Log.i(TAG, "onPrepared")
 
-            // 在视频准备好后再附加播控
-            attachMediaController()
-
             // 目前只支持异步 prepared，所以在这里自动开启播放
             start()
 
-            // 确保 MediaController 状态同步
+            // 显示播控栏
             post {
-                _mediaController?.let { controller ->
-                    // 强制刷新 MediaController 的状态
-                    if (controller.isShowing) {
-                        controller.hide()
-                        controller.show(5000)
-                    }
-                }
+                _playerOverlay?.showControl()
             }
         }
     }
@@ -426,10 +433,22 @@ class SkyVideoView(context: Context,
         }
     }
 
+    // 外部 Seek 完成监听器
+    private var _externalSeekCompleteListener: IMediaPlayer.OnSeekCompleteListener? = null
+
     private val _onSeekCompleteListener: IMediaPlayer.OnSeekCompleteListener = object : IMediaPlayer.OnSeekCompleteListener {
         override fun onSeekComplete(mp: IMediaPlayer) {
             Log.d(TAG, "onSeekComplete")
             _isSeekInProgress = false
+
+            // 如果 Whisper 已启用，清空字幕队列
+            if (_isWhisperEnabled) {
+                (mp as? SkyMediaPlayer)?.clearSubtitleQueue()
+                Log.d(TAG, "onSeekComplete: cleared subtitle queue (Whisper enabled)")
+            }
+
+            // 通知外部监听器
+            _externalSeekCompleteListener?.onSeekComplete(mp)
         }
     }
 
@@ -464,5 +483,84 @@ class SkyVideoView(context: Context,
             Log.i(TAG, "onInfo what:$what, extra:$extra")
             return false
         }
+    }
+
+    // ============================================================================
+    // Whisper AI 字幕相关方法
+    // ============================================================================
+
+    /**
+     * 启用或禁用 Whisper AI 字幕
+     * @param enabled 是否启用
+     * @param modelPath 模型文件路径（启用时必须提供）
+     * @param language 语言代码，如 "zh"、"en"，默认 "zh"
+     * @param queueSeconds 推理间隔（秒），范围 3-20，默认 10
+     * @return 0 成功，负值失败
+     */
+    fun setWhisperEnabled(
+        enabled: Boolean,
+        modelPath: String? = null,
+        language: String = "zh",
+        queueSeconds: Int = 10
+    ): Int {
+        _isWhisperEnabled = enabled
+        _whisperModelPath = modelPath
+
+        val player = _mediaPlayer as? SkyMediaPlayer
+        if (player == null) {
+            Log.e(TAG, "setWhisperEnabled: player is not SkyMediaPlayer")
+            return -1
+        }
+
+        val result = player.setWhisperEnabled(enabled, modelPath, language, queueSeconds)
+
+        Log.i(TAG, "setWhisperEnabled: enabled=$enabled, queueSeconds=$queueSeconds, result=$result")
+        return result
+    }
+
+    /**
+     * 检查 Whisper 是否已启用
+     */
+    fun isWhisperEnabled(): Boolean = _isWhisperEnabled
+
+    /**
+     * 设置字幕文本（供外部调用，如字幕回调）
+     * @param text 字幕文本，传 null 或空字符串隐藏字幕
+     */
+    fun setSubtitleText(text: String?) {
+        post {
+            _playerOverlay?.setSubtitleText(text)
+        }
+    }
+
+    /**
+     * 隐藏字幕
+     */
+    fun hideSubtitle() {
+        _playerOverlay?.hideSubtitle()
+    }
+
+    /**
+     * 获取内部的 SkyMediaPlayer 实例
+     * 用于高级控制
+     */
+    fun getMediaPlayer(): SkyMediaPlayer? {
+        return _mediaPlayer as? SkyMediaPlayer
+    }
+
+    /**
+     * 设置外部 Seek 完成监听器
+     * 用于在 Seek 完成后执行额外操作（如清空字幕队列、显示加载提示等）
+     * @param listener Seek 完成监听器
+     */
+    fun setOnSeekCompleteListener(listener: IMediaPlayer.OnSeekCompleteListener?) {
+        _externalSeekCompleteListener = listener
+    }
+
+    /**
+     * 获取播放器覆盖层
+     */
+    fun getPlayerOverlay(): SkyPlayerOverlay? {
+        return _playerOverlay
     }
 }

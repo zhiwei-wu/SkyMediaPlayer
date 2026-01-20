@@ -286,7 +286,69 @@ typedef struct VideoState {
     SDL_Thread *refresh_tid;        // 刷新线程句柄
     int refresh_thread_abort;       // 刷新线程退出标志
 
+    // 动态音频滤镜支持
+    char *audio_filters;            // 动态音频滤镜描述字符串
+    SDL_Mutex *audio_filter_mutex;  // 保护 audio_filters 的互斥锁
+    int audio_filter_changed;       // 滤镜变更标志（1=需要重新配置）
+
+    // 异步 Whisper 处理支持
+    SDL_Thread *whisper_tid;        // Whisper 处理线程
+    int whisper_abort;              // Whisper 线程退出标志
+    AVFilterGraph *whisper_agraph;  // Whisper 专用滤镜图
+    AVFilterContext *whisper_in_filter;   // Whisper 输入滤镜
+    AVFilterContext *whisper_out_filter;  // Whisper 输出滤镜
+    AVFifo *whisper_frame_queue;    // 待处理的音频帧队列
+    SDL_Mutex *whisper_mutex;       // Whisper 队列互斥锁
+    SDL_Condition *whisper_cond;    // Whisper 队列条件变量
+    struct AudioParams whisper_filter_src; // Whisper 滤镜源参数
+    int64_t whisper_current_pts;    // 当前正在处理的音频帧 PTS（用于 PTS 同步）
+    
+    // ==================== 独立 Whisper 解码流（超前解码方案）====================
+    // 核心思想：使用独立的 AVFormatContext 和解码器，始终比播放位置超前 N 秒解码
+    // 这样可以保证 Whisper 有足够的时间处理音频，生成字幕后能及时显示
+    
+    // 独立的格式上下文和解码器
+    AVFormatContext *whisper_ic;           // 独立的格式上下文（打开同一个文件）
+    AVCodecContext *whisper_avctx;         // 独立的音频解码器
+    PacketQueue whisper_audioq;            // 独立的音频包队列
+    int whisper_audio_stream;              // 音频流索引
+    AVStream *whisper_audio_st;            // 音频流指针
+    
+    // 独立的线程
+    SDL_Thread *whisper_read_tid;          // 独立的读取线程
+    SDL_Thread *whisper_decode_tid;        // 独立的解码线程
+    SDL_Condition *whisper_read_cond;      // 读取线程条件变量
+    
+    // 超前解码控制
+    volatile int64_t whisper_decode_pts;   // 当前 Whisper 解码位置（微秒，AV_TIME_BASE）
+    double whisper_lead_time;              // 目标超前时间（秒），默认 10 秒
+    double whisper_min_lead_time;          // 最小超前时间（秒），低于此值加速解码
+    double whisper_max_lead_time;          // 最大超前时间（秒），超过此值暂停解码
+    
+    // Seek 同步
+    volatile int whisper_seek_req;         // Whisper seek 请求标志
+    volatile int64_t whisper_seek_pos;     // Whisper seek 目标位置（微秒）
+    int whisper_seek_flags;                // Whisper seek 标志
+    
+    // 状态标志
+    volatile int whisper_decode_abort;     // 解码线程退出标志
+    volatile int whisper_read_abort;       // 读取线程退出标志
+    volatile int whisper_eof;              // Whisper 读取到文件末尾
+    volatile int whisper_enabled;          // Whisper 功能是否启用
+
 } VideoState;
+
+/**
+ * 带时间戳的 Whisper 字幕结构
+ * 用于 PTS 同步方案，确保字幕与音频/视频同步显示
+ */
+typedef struct WhisperSubtitle {
+    char *text;           // 字幕文本
+    int64_t start_pts;    // 开始时间戳（音频帧 PTS，单位：AV_TIME_BASE）
+    int64_t end_pts;      // 结束时间戳（可选，-1 表示未知）
+    double start_time;    // 开始时间（秒）
+    double end_time;      // 结束时间（秒，-1 表示未知）
+} WhisperSubtitle;
 
 VideoState *stream_open(const char *filename,const AVInputFormat *iformat);
 
@@ -299,6 +361,14 @@ void stream_seek(VideoState *is, int64_t pos, int64_t rel, int by_bytes);
 double get_current_position(VideoState *is);
 
 int64_t get_media_duration(VideoState *is);
+
+/**
+ * 设置动态音频滤镜
+ * @param is VideoState 实例
+ * @param filters 滤镜描述字符串，如 "whisper=model=/path/to/model.bin:language=zh"，传 NULL 清除滤镜
+ * @return 0 成功，负值失败
+ */
+int set_audio_filters(VideoState *is, const char *filters);
 
 #ifdef __cplusplus
 };

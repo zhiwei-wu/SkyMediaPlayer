@@ -58,6 +58,10 @@ extern "C" {
 #define SKY_MSG_REQ_PAUSE                       20002
 #define SKY_MSG_REQ_SEEK                        20003
 
+// Whisper subtitle messages
+#define SKY_MSG_WHISPER_SUBTITLE                30001   /* obj = subtitle text (char*) */
+#define SKY_MSG_WHISPER_PREBUFFER_COMPLETE      30002   /* arg1 = buffered subtitle count */
+
 // ============================================================================
 
 #ifdef __cplusplus

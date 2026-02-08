@@ -35,12 +35,19 @@
 - **易于理解**：每个模块职责明确，代码注释完整
 - **便于扩展**：基于接口设计，支持自定义渲染器和音频输出
 
-#### 5. 优秀的学习价值
-- **完整的技术栈**：涵盖 FFmpeg、JNI、OpenGL ES、OpenSL ES
+#### 5. Whisper AI 实时字幕
+- **端侧 AI 推理**：集成 [whisper.cpp](https://github.com/ggerganov/whisper.cpp)，在设备端实时语音识别生成字幕，无需网络
+- **独立解码流架构**：使用独立的 AVFormatContext 和解码器，始终比播放位置超前 5-15 秒解码音频，保证 Whisper 有充足处理时间
+- **PTS 同步字幕**：字幕携带精确时间戳，基于播放主时钟进行同步展示，支持丢弃过期字幕、队列缓冲和窗口匹配
+- **Seek 联动**：Seek 时自动清空字幕队列，独立解码流同步跳转，确保字幕与画面一致
+- **可配置**：支持处理间隔、推理设备（CPU/GPU）、语言等参数调节
+
+#### 6. 优秀的学习价值
+- **完整的技术栈**：涵盖 FFmpeg、JNI、OpenGL ES、OpenSL ES、Whisper AI
 - **可运行的示例**：app 模块提供完整的 Demo
 - **教学级代码**：适合学习音视频开发的完整实现
 
-目前已支持本地文件播放和在线视频播放（HTTP/HTTPS/HLS），直播等功能持续迭代中。
+目前已支持本地文件播放、在线视频播放（HTTP/HTTPS/HLS）和 AI 实时字幕，直播等功能持续迭代中。
 
 ## 🏗️ 架构设计
 
@@ -65,6 +72,7 @@ SkyPlayer 采用清晰的分层架构设计：
 - **渲染器**（`skyrenderer.cpp` + 5 个 EGL2 渲染器）：硬件加速渲染
 - **音频输出**（`skyaudio.cpp`）：OpenSL ES 低延迟播放
 - **消息队列**（`sky_msg_queue.cpp`）：异步事件处理
+- **Whisper 字幕**：独立解码流超前解码 + whisper.cpp 端侧推理 + PTS 同步展示
 
 #### FFmpeg 层
 - **ffplay 核心**（`ffplay.c`）：完整的播放引擎
@@ -310,10 +318,10 @@ cd SkyPlayer
 - [x] **在线视频播放（HTTP/HTTPS）** 🎉
 - [x] **HLS 直播流支持（m3u8）** 🎉
 - [x] **OpenSSL 集成（HTTPS 加密传输）** 🎉
+- [x] **Whisper AI 实时字幕（端侧推理、PTS 同步）** 🎉
 
 ### 进行中 🚧
 - [ ] RTMP 直播流支持
-- [ ] 字幕支持
 - [ ] 播放列表管理
 - [ ] 网络状态监控和自适应
 

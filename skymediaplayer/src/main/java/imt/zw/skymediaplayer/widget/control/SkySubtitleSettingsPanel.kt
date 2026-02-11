@@ -69,7 +69,7 @@ class SkySubtitleSettingsPanel @JvmOverloads constructor(
         }
         addView(dimBackground)
 
-        // 底部面板容器
+        // 底部面板容器（横屏时限制最大高度为屏幕高度的 80%）
         val scrollView = ScrollView(context).apply {
             layoutParams = LayoutParams(
                 LayoutParams.MATCH_PARENT,
@@ -77,7 +77,18 @@ class SkySubtitleSettingsPanel @JvmOverloads constructor(
             ).apply {
                 gravity = Gravity.BOTTOM
             }
-            isVerticalScrollBarEnabled = false
+            isVerticalScrollBarEnabled = true
+        }
+
+        scrollView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            val currentHeight = scrollView.height
+            val screenHeight = context.resources.displayMetrics.heightPixels
+            val maxAllowedHeight = (screenHeight * 0.8).toInt()
+            if (currentHeight > maxAllowedHeight) {
+                scrollView.layoutParams = scrollView.layoutParams.apply {
+                    height = maxAllowedHeight
+                }
+            }
         }
 
         panelContainer = LinearLayout(context).apply {

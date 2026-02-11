@@ -337,6 +337,36 @@ jint sky_mediaPlayer_setAudioFilter(JNIEnv *env, jobject thiz, jstring filter) {
     return result;
 }
 
+void sky_mediaPlayer_setRendererBackend(JNIEnv *env, jobject thiz, jint backend) {
+    auto* player = asSkyPlayer(env, thiz);
+    if (nullptr == player) {
+        ALOG_E(TAG, "setRendererBackend: player is null");
+        return;
+    }
+
+    player->setRendererBackend(static_cast<RendererBackend>(backend));
+}
+
+void sky_mediaPlayer_setDecoderMode(JNIEnv *env, jobject thiz, jint mode) {
+    auto* player = asSkyPlayer(env, thiz);
+    if (nullptr == player) {
+        ALOG_E(TAG, "setDecoderMode: player is null");
+        return;
+    }
+
+    player->setDecoderMode(static_cast<DecoderMode>(mode));
+}
+
+jint sky_mediaPlayer_getActiveDecoderMode(JNIEnv *env, jobject thiz) {
+    auto* player = asSkyPlayer(env, thiz);
+    if (nullptr == player) {
+        ALOG_E(TAG, "getActiveDecoderMode: player is null");
+        return SKY_DECODER_MODE_SOFTWARE;
+    }
+
+    return static_cast<jint>(player->getSkyDecoderHandler().getActiveDecoderMode());
+}
+
 jboolean sky_mediaPlayer_setWhisperPrebufferMode(JNIEnv *env, jobject thiz, jboolean enabled) {
     auto* player = asSkyPlayer(env, thiz);
     if (nullptr == player) {
@@ -362,7 +392,10 @@ static JNINativeMethod methods[] = {
         {"_isPlaying", "()Z", (void *) sky_mediaPlayer_isPlaying},
         {"_release", "()V", (void *) sky_mediaPlayer_release},
         {"_setAudioFilter", "(Ljava/lang/String;)I", (void *) sky_mediaPlayer_setAudioFilter},
-        {"_setWhisperPrebufferMode", "(Z)Z", (void *) sky_mediaPlayer_setWhisperPrebufferMode}
+        {"_setWhisperPrebufferMode", "(Z)Z", (void *) sky_mediaPlayer_setWhisperPrebufferMode},
+        {"_setRendererBackend", "(I)V", (void *) sky_mediaPlayer_setRendererBackend},
+        {"_setDecoderMode", "(I)V", (void *) sky_mediaPlayer_setDecoderMode},
+        {"_getActiveDecoderMode", "()I", (void *) sky_mediaPlayer_getActiveDecoderMode}
 };
 
 extern "C" JNIEXPORT jint JNICALL

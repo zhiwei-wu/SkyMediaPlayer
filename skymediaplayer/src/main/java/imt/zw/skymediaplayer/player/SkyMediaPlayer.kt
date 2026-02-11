@@ -298,6 +298,12 @@ class SkyMediaPlayer() : IMediaPlayer {
     private external fun _setAudioFilter(filter: String?): Int
     @Keep
     private external fun _setWhisperPrebufferMode(enabled: Boolean): Boolean
+    @Keep
+    private external fun _setRendererBackend(backend: Int)
+    @Keep
+    private external fun _setDecoderMode(mode: Int)
+    @Keep
+    private external fun _getActiveDecoderMode(): Int
     // private external fun _reset()
     // private external fun _setVolume(leftVolume: Float, rightVolume: Float)
     // private external fun _getAudioSessionId(): Int
@@ -546,6 +552,88 @@ class SkyMediaPlayer() : IMediaPlayer {
         synchronized(_subtitleQueue) {
             _subtitleQueue.clear()
         }
+    }
+
+    /**
+     * 渲染后端类型枚举
+     * 与 Native 层 RendererBackend 枚举值保持一致
+     */
+    enum class RendererBackend(val value: Int) {
+        OPENGL_ES(0),
+        VULKAN(1),
+        METAL(2),
+        AUTO(3);
+
+        companion object {
+            fun fromValue(value: Int): RendererBackend {
+                return entries.firstOrNull { it.value == value } ?: OPENGL_ES
+            }
+        }
+    }
+
+    /**
+     * 设置渲染后端（必须在 prepareAsync 之前调用）
+     * @param backend 渲染后端类型
+     */
+    fun setRendererBackend(backend: RendererBackend) {
+        Log.i(TAG, "setRendererBackend: ${backend.name}")
+        _setRendererBackend(backend.value)
+    }
+
+    /**
+     * 设置渲染后端（通过 int 值，必须在 prepareAsync 之前调用）
+     * @param backendValue 渲染后端类型值（0=OpenGL ES, 1=Vulkan, 2=Metal, 3=Auto）
+     */
+    fun setRendererBackend(backendValue: Int) {
+        val backend = RendererBackend.fromValue(backendValue)
+        setRendererBackend(backend)
+    }
+
+    /**
+     * 解码模式枚举
+     * 与 Native 层 DecoderMode 枚举值保持一致
+     */
+    enum class DecoderMode(val value: Int) {
+        /** 硬解 + Surface 直渲染（零拷贝，性能最优） */
+        HW_SURFACE(0),
+        /** 硬解 + Buffer 输出（支持后处理） */
+        HW_BUFFER(1),
+        /** FFmpeg 纯软解 */
+        SOFTWARE(2),
+        /** 自动选择（三级回退：HW_SURFACE → HW_BUFFER → SOFTWARE） */
+        AUTO(3);
+
+        companion object {
+            fun fromValue(value: Int): DecoderMode {
+                return entries.firstOrNull { it.value == value } ?: AUTO
+            }
+        }
+    }
+
+    /**
+     * 设置解码模式（必须在 prepareAsync 之前调用）
+     * @param mode 解码模式
+     */
+    fun setDecoderMode(mode: DecoderMode) {
+        Log.i(TAG, "setDecoderMode: ${mode.name}")
+        _setDecoderMode(mode.value)
+    }
+
+    /**
+     * 设置解码模式（通过 int 值，必须在 prepareAsync 之前调用）
+     * @param modeValue 解码模式值（0=HW_SURFACE, 1=HW_BUFFER, 2=SOFTWARE, 3=AUTO）
+     */
+    fun setDecoderMode(modeValue: Int) {
+        val mode = DecoderMode.fromValue(modeValue)
+        setDecoderMode(mode)
+    }
+
+    /**
+     * 获取实际生效的解码模式（经过回退策略后的结果）
+     * @return 实际使用的解码模式值（0=HW_SURFACE, 1=HW_BUFFER, 2=SOFTWARE）
+     */
+    fun getActiveDecoderMode(): Int {
+        return _getActiveDecoderMode()
     }
 
     /**

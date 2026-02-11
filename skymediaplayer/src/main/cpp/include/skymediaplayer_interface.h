@@ -7,6 +7,7 @@
 
 #include <stdbool.h>
 #include "ffplay.h"
+#include "sky_decoder_types.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -87,6 +88,81 @@ bool sky_set_whisper_prebuffer_mode(void *player, bool enabled);
  * @return 成功返回 true，失败返回 false
  */
 bool sky_post_whisper_prebuffer_complete(void *player, int subtitle_count);
+
+// ============================================================================
+// Hardware Decoder Interface (C → C++)
+// ============================================================================
+
+/**
+ * 获取用户设置的解码模式
+ * @return SKY_DECODER_MODE_* 常量
+ */
+int sky_get_decoder_mode(void *player);
+
+/**
+ * 初始化硬件解码器（不带 Surface）
+ * 内部实现三级回退：HW_SURFACE → HW_BUFFER → 返回 false（软解）
+ * @param player SkyPlayer 实例指针
+ * @param codecpar 编解码器参数
+ * @return true 硬解初始化成功，false 需要使用 FFmpeg 软解
+ */
+bool sky_init_hw_decoder(void *player, AVCodecParameters *codecpar);
+
+/**
+ * 初始化硬件解码器（带 Surface，用于 Surface 直渲模式）
+ * @param player SkyPlayer 实例指针
+ * @param codecpar 编解码器参数
+ * @param surface ANativeWindow 指针
+ * @return true 硬解初始化成功
+ */
+bool sky_init_hw_decoder_with_surface(void *player, AVCodecParameters *codecpar, void *surface);
+
+/**
+ * 向硬件解码器投喂压缩数据包
+ * @return 0 成功, AVERROR(EAGAIN) 需要先取帧, 其他负值错误
+ */
+int sky_hw_decoder_send_packet(void *player, AVPacket *packet);
+
+/**
+ * 从硬件解码器获取解码帧
+ * @return 0 成功, AVERROR(EAGAIN) 需要先投喂, AVERROR_EOF 结束
+ */
+int sky_hw_decoder_receive_frame(void *player, AVFrame *frame);
+
+/**
+ * 从硬件解码器取出帧但不渲染（仅 Surface 模式）
+ * 取出帧元数据（PTS、宽高），但不渲染到 Surface。
+ * 调用方需要在音画同步等待后调用 sky_hw_decoder_render_output() 完成渲染。
+ * @return 0 成功, AVERROR(EAGAIN) 需要先投喂, AVERROR_EOF 结束
+ */
+int sky_hw_decoder_dequeue_frame(void *player, AVFrame *frame);
+
+/**
+ * 将已取出的帧渲染到 Surface（仅 Surface 模式）
+ * 必须在 sky_hw_decoder_dequeue_frame() 返回 0 之后调用。
+ * @return true 渲染成功
+ */
+bool sky_hw_decoder_render_output(void *player);
+
+/**
+ * 刷新硬件解码器（Seek 时调用）
+ */
+void sky_hw_decoder_flush(void *player);
+
+/**
+ * 释放硬件解码器资源
+ */
+void sky_hw_decoder_release(void *player);
+
+/**
+ * 硬件解码器是否已激活
+ */
+bool sky_is_hw_decoder_active(void *player);
+
+/**
+ * 是否处于 Surface 直渲模式
+ */
+bool sky_is_surface_mode(void *player);
 
 #ifdef __cplusplus
 };

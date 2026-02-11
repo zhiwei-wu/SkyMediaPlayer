@@ -34,6 +34,9 @@ set_target_properties(skyffmpeg PROPERTIES
 include_directories(${CMAKE_SOURCE_DIR}/ffmpeg/include)
 include_directories(${CMAKE_SOURCE_DIR}/include)
 include_directories(${CMAKE_SOURCE_DIR}/ffplay)
+include_directories(${CMAKE_SOURCE_DIR}/player)
+include_directories(${CMAKE_SOURCE_DIR}/player/renderer)
+include_directories(${CMAKE_SOURCE_DIR}/player/decoder)
 
 # Creates and names a library, sets it as either STATIC
 # or SHARED, and provides the relative paths to its source code.
@@ -54,14 +57,17 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         ffplay/cmdutils.c
         ffplay/opt_common.c
         player/skymediaplayer.cpp
-        player/skyrenderer.cpp
-        player/sky_egl2_renderer_yuv420p.cpp
-        player/sky_egl2_renderer_nv12.cpp
-        player/sky_egl2_renderer_nv21.cpp
-        player/sky_egl2_renderer_rgba.cpp
-        player/sky_egl2_renderer_yuv422p.cpp
         player/skyaudio.cpp
         player/sky_msg_queue.cpp
+        player/renderer/skyrenderer.cpp
+        player/renderer/sky_egl2_renderer_yuv420p.cpp
+        player/renderer/sky_egl2_renderer_nv12.cpp
+        player/renderer/sky_egl2_renderer_nv21.cpp
+        player/renderer/sky_egl2_renderer_rgba.cpp
+        player/renderer/sky_egl2_renderer_yuv422p.cpp
+        player/renderer/sky_vk_renderer.cpp
+        player/decoder/sky_hw_decoder.cpp
+        player/decoder/sky_mediacodec_decoder.cpp
         skymediaplayer_jni.cpp)
 
 # Specifies libraries CMake should link to your target library. You
@@ -76,4 +82,6 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
         log
         OpenSLES
         EGL
-        GLESv2)
+        GLESv2
+        vulkan
+        mediandk)

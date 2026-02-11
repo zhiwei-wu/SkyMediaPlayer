@@ -47,6 +47,8 @@ class SkyPlayerOverlay @JvmOverloads constructor(
 
     // 回调
     private var onSubtitleSettingsChangeListener: OnSubtitleSettingsChangeListener? = null
+    private var onRotateButtonClickListener: View.OnClickListener? = null
+    private var onDebugButtonClickListener: View.OnClickListener? = null
 
     init {
         initView()
@@ -96,6 +98,16 @@ class SkyPlayerOverlay @JvmOverloads constructor(
             // 设置 AI 字幕按钮点击监听
             setOnSubtitleButtonClickListener {
                 showSettingsPanel()
+            }
+
+            // 设置旋转按钮点击监听
+            setOnRotateButtonClickListener {
+                onRotateButtonClickListener?.onClick(it)
+            }
+
+            // 设置调试信息按钮点击监听
+            setOnDebugButtonClickListener {
+                onDebugButtonClickListener?.onClick(it)
             }
         }
         addView(controlView)
@@ -291,6 +303,20 @@ class SkyPlayerOverlay @JvmOverloads constructor(
      */
     fun updatePlayPauseButton(playing: Boolean) {
         controlView.updatePlayPauseButton(playing)
+    }
+
+    /**
+     * 设置旋转按钮点击监听器
+     */
+    fun setOnRotateButtonClickListener(listener: View.OnClickListener?) {
+        this.onRotateButtonClickListener = listener
+    }
+
+    /**
+     * 设置调试信息按钮点击监听器
+     */
+    fun setOnDebugButtonClickListener(listener: View.OnClickListener?) {
+        this.onDebugButtonClickListener = listener
     }
 
     /**

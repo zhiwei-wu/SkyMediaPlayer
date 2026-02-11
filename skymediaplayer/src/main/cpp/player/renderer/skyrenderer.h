@@ -9,6 +9,7 @@
 #include "libavutil/frame.h"
 #include "logger.h"
 #include "libavutil/pixdesc.h"
+#include "sky_renderer_types.h"
 
 using Matrix4x4Std = std::array<float, 16>;
 
@@ -95,10 +96,17 @@ protected:
 
 class SkyRenderer {
 public:
-    virtual ~SkyRenderer(){}
+    virtual ~SkyRenderer() = default;
     virtual bool displayImage(EGLNativeWindowType window, AVFrame *frame) = 0;
     virtual bool isValid() = 0;
     virtual void terminate() = 0;
+
+    /**
+     * 工厂方法：根据渲染后端类型创建对应的渲染器实例
+     * @param backend 渲染后端类型
+     * @return 渲染器实例，Vulkan/Metal 暂未实现时回退到 OpenGL ES
+     */
+    static std::unique_ptr<SkyRenderer> create(RendererBackend backend);
 };
 
 class SkyEGL2Renderer : public SkyRenderer {

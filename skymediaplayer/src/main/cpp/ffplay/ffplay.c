@@ -48,6 +48,9 @@
 #include "libavutil/tx.h"
 #include "libswresample/swresample.h"
 #include "skymediaplayer_interface.h"
+#include "logger.h"
+
+#define FFPLAY_TAG "SkyPlayer"
 
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -152,6 +155,8 @@ static const struct TextureFormatEntry {
     { AV_PIX_FMT_YUV420P,        SDL_PIXELFORMAT_IYUV },
     { AV_PIX_FMT_YUYV422,        SDL_PIXELFORMAT_YUY2 },
     { AV_PIX_FMT_UYVY422,        SDL_PIXELFORMAT_UYVY },
+    { AV_PIX_FMT_NV12,           SDL_PIXELFORMAT_NV12 },
+    { AV_PIX_FMT_NV21,           SDL_PIXELFORMAT_NV21 },
     { AV_PIX_FMT_NONE,           SDL_PIXELFORMAT_UNKNOWN },
 };
 
@@ -1181,15 +1186,21 @@ static int video_open(VideoState *is)
 /* display the current picture, if any */
 static void video_display(VideoState *is)
 {
-    if (!is->width)
+    if (!is->width) {
+        ALOG_I(FFPLAY_TAG, "[DEBUG] video_display: calling video_open, width=%d", is->width);
         video_open(is);
+    }
 
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
     if (is->audio_st && is->show_mode != SHOW_MODE_VIDEO) {
         video_audio_display(is);
     } else if (is->video_st) {
-//        video_image_display(is);
+        static int display_counter = 0;
+        if (display_counter++ % 100 == 0) {
+            ALOG_I(FFPLAY_TAG, "[DEBUG] video_display: calling sky_video_image_display, count=%d, pictq.rindex=%d, pictq.size=%d",
+                   display_counter, is->pictq.rindex, is->pictq.size);
+        }
         sky_video_image_display(is);
     }
     SDL_RenderPresent(renderer);
@@ -1325,7 +1336,9 @@ static void stream_toggle_pause(VideoState *is)
 
 void toggle_pause(VideoState *is)
 {
+    ALOG_I(FFPLAY_TAG, "[DEBUG] toggle_pause: BEFORE paused=%d", is->paused);
     stream_toggle_pause(is);
+    ALOG_I(FFPLAY_TAG, "[DEBUG] toggle_pause: AFTER paused=%d", is->paused);
     is->step = 0;
 }
 
@@ -1537,8 +1550,9 @@ retry:
         }
 display:
         /* display picture */
-        if (!display_disable && is->force_refresh && is->show_mode == SHOW_MODE_VIDEO && is->pictq.rindex_shown)
+        if (!display_disable && is->force_refresh && is->show_mode == SHOW_MODE_VIDEO && is->pictq.rindex_shown) {
             video_display(is);
+        }
     }
     is->force_refresh = 0;
     if (show_status) {
@@ -3138,9 +3152,288 @@ static int decoder_start(Decoder *d, int (*fn)(void *), const char *thread_name,
     return 0;
 }
 
+/**
+ * 硬件解码视频线程
+ * 从 PacketQueue 取 packet → 送入硬件解码器 → 取出帧 → 入队显示
+ * Surface 模式：帧由 MediaCodec 直接渲染到 Surface，更新时钟即可
+ * Buffer 模式：取出 NV12 帧后走正常的滤镜 + queue_picture 路径
+ */
+static int video_thread_hw(VideoState *is)
+{
+    AVFrame *frame = av_frame_alloc();
+    AVPacket *pkt = av_packet_alloc();
+    double pts;
+    double duration;
+    int ret;
+    AVRational tb = is->video_st->time_base;
+    AVRational frame_rate = av_guess_frame_rate(is->ic, is->video_st, NULL);
+
+    AVFilterGraph *graph = NULL;
+    AVFilterContext *filt_out = NULL, *filt_in = NULL;
+    int last_w = 0;
+    int last_h = 0;
+    enum AVPixelFormat last_format = -2;
+    int last_serial = -1;
+    int last_vfilter_idx = 0;
+
+    if (!frame || !pkt) {
+        av_frame_free(&frame);
+        av_packet_free(&pkt);
+        return AVERROR(ENOMEM);
+    }
+
+    ALOG_I(FFPLAY_TAG, "[DEBUG] video_thread_hw: started, hw_surface_mode=%d, hw_decoder_active=%d",
+           is->hw_surface_mode, is->hw_decoder_active);
+
+    for (;;) {
+        if (is->videoq.abort_request) {
+            ALOG_I(FFPLAY_TAG, "[DEBUG] video_thread_hw: abort_request, exiting loop");
+            break;
+        }
+
+        // Surface 直渲模式：暂停时挂起解码线程，避免继续 dequeue 渲染
+        if (is->hw_surface_mode && is->paused && !is->videoq.abort_request) {
+            av_usleep(10000); // 10ms
+            continue;
+        }
+
+        // 从 PacketQueue 取 packet
+        if (is->videoq.nb_packets == 0) {
+            SDL_SignalCondition(is->viddec.empty_queue_cond);
+        }
+
+        ret = packet_queue_get(&is->videoq, pkt, 1, &is->viddec.pkt_serial);
+        if (ret < 0) {
+            ALOG_I(FFPLAY_TAG, "[DEBUG] video_thread_hw: packet_queue_get returned %d, exiting", ret);
+            break;
+        }
+        // serial 变化时刷新硬件解码器（Seek 触发）
+        if (is->videoq.serial != is->viddec.pkt_serial) {
+            av_packet_unref(pkt);
+            sky_hw_decoder_flush(is->skyPlayer);
+            is->viddec.finished = 0;
+            continue;
+        }
+
+        // 检测 flush packet（data 为 NULL 表示 flush）
+        if (!pkt->data) {
+            sky_hw_decoder_flush(is->skyPlayer);
+            av_packet_unref(pkt);
+            continue;
+        }
+
+        // 投喂 packet 到硬件解码器
+        ret = sky_hw_decoder_send_packet(is->skyPlayer, pkt);
+        av_packet_unref(pkt);
+
+        if (ret < 0 && ret != AVERROR(EAGAIN)) {
+            ALOG_E(FFPLAY_TAG, "[DEBUG] video_thread_hw: send_packet failed: %d", ret);
+            continue;
+        }
+
+        // 循环取出所有可用的解码帧
+        while (!is->videoq.abort_request) {
+            // Surface 直渲模式：使用两步流程（dequeue → 同步 → render）
+            if (is->hw_surface_mode) {
+                ret = sky_hw_decoder_dequeue_frame(is->skyPlayer, frame);
+            } else {
+                ret = sky_hw_decoder_receive_frame(is->skyPlayer, frame);
+            }
+
+            if (ret == AVERROR(EAGAIN)) {
+                break;
+            }
+            if (ret == AVERROR_EOF) {
+                is->viddec.finished = is->viddec.pkt_serial;
+                ALOG_I(FFPLAY_TAG, "[DEBUG] video_thread_hw: receive_frame EOF");
+                break;
+            }
+            if (ret < 0) {
+                ALOG_E(FFPLAY_TAG, "[DEBUG] video_thread_hw: receive_frame failed: %d", ret);
+                break;
+            }
+
+            // Surface 直渲模式：帧已 dequeue 但尚未渲染
+            // 先做音画同步，再调用 renderOutputBuffer 渲染到 Surface
+            if (is->hw_surface_mode) {
+                if (frame->pts != AV_NOPTS_VALUE) {
+                    pts = frame->pts * av_q2d(tb);
+                } else {
+                    pts = NAN;
+                }
+                duration = (frame_rate.num && frame_rate.den ?
+                            av_q2d((AVRational){frame_rate.den, frame_rate.num}) : 0);
+
+                // ===== 音画同步：计算视频与音频主时钟的差值 =====
+                bool should_render = true;
+                if (!isnan(pts) && get_master_sync_type(is) != AV_SYNC_VIDEO_MASTER) {
+                    double master_clock = get_master_clock(is);
+                    double diff = pts - master_clock;
+
+                    if (!isnan(diff) && fabs(diff) < AV_NOSYNC_THRESHOLD) {
+                        if (diff > 0.010) {
+                            // 视频超前音频 > 10ms：等待，让音频追上来
+                            double wait_time = diff;
+                            // 限制最大等待时间为 2 倍帧时长，避免卡死
+                            if (wait_time > duration * 2.0 && duration > 0) {
+                                wait_time = duration * 2.0;
+                            }
+                            av_usleep((int64_t)(wait_time * 1000000.0));
+                        } else if (diff < -0.100) {
+                            // 视频落后音频 > 100ms：丢帧（释放 buffer 但不渲染）
+                            is->frame_drops_early++;
+                            should_render = false;
+                        }
+                        // diff 在 [-100ms, +10ms] 范围内：正常显示
+                    }
+                }
+
+                // 同步完成后，渲染帧到 Surface（或丢帧时跳过渲染）
+                if (should_render) {
+                    sky_hw_decoder_render_output(is->skyPlayer);
+                }
+                // 丢帧时不调用 render，pending buffer 会在下次 dequeueFrame 时被释放
+
+                // 更新视频时钟
+                set_clock(&is->vidclk, pts, is->viddec.pkt_serial);
+
+                // 标记首帧已解码
+                if (!is->viddec.first_frame_decoded) {
+                    is->viddec.first_frame_decoded = true;
+                    sky_post_simple_message(is->skyPlayer, SKY_MSG_VIDEO_DECODED_START);
+                }
+
+                av_frame_unref(frame);
+                continue;
+            }
+
+            // Buffer 模式：取出 NV12 帧，走正常的滤镜 + queue_picture 路径
+            // PTS 处理
+            if (frame->pts != AV_NOPTS_VALUE) {
+                frame->pts = frame->best_effort_timestamp;
+            }
+            frame->sample_aspect_ratio = av_guess_sample_aspect_ratio(is->ic, is->video_st, frame);
+
+            // 丢帧策略（与软解路径一致）
+            if (framedrop > 0 || (framedrop && get_master_sync_type(is) != AV_SYNC_VIDEO_MASTER)) {
+                if (frame->pts != AV_NOPTS_VALUE) {
+                    double dpts = av_q2d(tb) * frame->pts;
+                    double diff = dpts - get_master_clock(is);
+                    if (!isnan(diff) && fabs(diff) < AV_NOSYNC_THRESHOLD &&
+                        diff - is->frame_last_filter_delay < 0 &&
+                        is->viddec.pkt_serial == is->vidclk.serial &&
+                        is->videoq.nb_packets) {
+                        is->frame_drops_early++;
+                        av_frame_unref(frame);
+                        continue;
+                    }
+                }
+            }
+
+            // 配置视频滤镜（格式/尺寸变化时重新配置）
+            if (last_w != frame->width
+                || last_h != frame->height
+                || last_format != frame->format
+                || last_serial != is->viddec.pkt_serial
+                || last_vfilter_idx != is->vfilter_idx) {
+                ALOG_I(FFPLAY_TAG, "[DEBUG] video_thread_hw: configuring video filters, %dx%d fmt=%d -> %dx%d fmt=%d",
+                       last_w, last_h, last_format, frame->width, frame->height, frame->format);
+                av_log(NULL, AV_LOG_DEBUG,
+                       "HW Video frame changed from size:%dx%d format:%s serial:%d to size:%dx%d format:%s serial:%d\n",
+                       last_w, last_h,
+                       (const char *)av_x_if_null(av_get_pix_fmt_name(last_format), "none"), last_serial,
+                       frame->width, frame->height,
+                       (const char *)av_x_if_null(av_get_pix_fmt_name(frame->format), "none"), is->viddec.pkt_serial);
+                avfilter_graph_free(&graph);
+                graph = avfilter_graph_alloc();
+                if (!graph) {
+                    ret = AVERROR(ENOMEM);
+                    goto the_end;
+                }
+                graph->nb_threads = filter_nbthreads;
+                if ((ret = configure_video_filters(graph, is, vfilters_list ? vfilters_list[is->vfilter_idx] : NULL, frame)) < 0) {
+                    ALOG_E(FFPLAY_TAG, "[DEBUG] video_thread_hw: configure_video_filters FAILED: %d", ret);
+                    SDL_Event event;
+                    event.type = SDL_EVENT_USER + 2;
+                    event.user.data1 = is;
+                    SDL_PushEvent(&event);
+                    goto the_end;
+                }
+                filt_in  = is->in_video_filter;
+                filt_out = is->out_video_filter;
+                last_w = frame->width;
+                last_h = frame->height;
+                last_format = frame->format;
+                last_serial = is->viddec.pkt_serial;
+                last_vfilter_idx = is->vfilter_idx;
+                frame_rate = av_buffersink_get_frame_rate(filt_out);
+            }
+
+            ret = av_buffersrc_add_frame(filt_in, frame);
+            if (ret < 0) {
+                ALOG_E(FFPLAY_TAG, "[DEBUG] video_thread_hw: av_buffersrc_add_frame FAILED: %d", ret);
+                goto the_end;
+            }
+
+            while (ret >= 0) {
+                FrameData *fd;
+
+                is->frame_last_returned_time = av_gettime_relative() / 1000000.0;
+
+                ret = av_buffersink_get_frame_flags(filt_out, frame, 0);
+                if (ret < 0) {
+                    if (ret == AVERROR_EOF) {
+                        is->viddec.finished = is->viddec.pkt_serial;
+                    }
+                    ret = 0;
+                    break;
+                }
+
+                fd = frame->opaque_ref ? (FrameData*)frame->opaque_ref->data : NULL;
+
+                is->frame_last_filter_delay = av_gettime_relative() / 1000000.0 - is->frame_last_returned_time;
+                if (fabs(is->frame_last_filter_delay) > AV_NOSYNC_THRESHOLD / 10.0)
+                    is->frame_last_filter_delay = 0;
+                tb = av_buffersink_get_time_base(filt_out);
+                duration = (frame_rate.num && frame_rate.den ? av_q2d((AVRational){frame_rate.den, frame_rate.num}) : 0);
+                pts = (frame->pts == AV_NOPTS_VALUE) ? NAN : frame->pts * av_q2d(tb);
+                ret = queue_picture(is, frame, pts, duration, fd ? fd->pkt_pos : -1, is->viddec.pkt_serial);
+                av_frame_unref(frame);
+                if (is->videoq.serial != is->viddec.pkt_serial)
+                    break;
+            }
+
+            if (ret < 0)
+                goto the_end;
+
+            break;
+        }
+    }
+
+the_end:
+    avfilter_graph_free(&graph);
+    av_frame_free(&frame);
+    av_packet_free(&pkt);
+    sky_hw_decoder_release(is->skyPlayer);
+    is->hw_decoder_active = 0;
+    return 0;
+}
+
 static int video_thread(void *arg)
 {
     VideoState *is = arg;
+
+    // 如果硬件解码器已激活，使用硬解路径
+    if (is->hw_decoder_active) {
+        const char *decodeMode = is->hw_surface_mode ? "HW_SURFACE (直渲)" : "HW_BUFFER";
+        av_log(NULL, AV_LOG_INFO, "video_thread: using hardware decoder path (surface_mode=%d)\n",
+               is->hw_surface_mode);
+        ALOG_I(FFPLAY_TAG, "========== DECODE MODE: MediaCodec %s ==========", decodeMode);
+        return video_thread_hw(is);
+    }
+
+    // 软解路径（原始 ffplay 逻辑）
+    ALOG_I(FFPLAY_TAG, "========== DECODE MODE: FFmpeg Software Decode ==========");
     AVFrame *frame = av_frame_alloc();
     double pts;
     double duration;
@@ -3480,17 +3773,9 @@ static void sdl_audio_callback(void *opaque, Uint8 *stream, int len)
         }
 
         if (is->auddec.pkt_serial != is->audioq.serial) {
-#ifdef __ANDROID__
-            __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "sdl_audio_callback: Serial mismatch detected: auddec.pkt_serial=%d, audioq.serial=%d, will sync decoder serial",
-                   is->auddec.pkt_serial, is->audioq.serial);
-#endif
             is->audio_buf_index = is->audio_buf_size;
             memset(stream, 0, len);
             sky_flush_audio(is->skyPlayer);
-#ifdef __ANDROID__
-            __android_log_print(ANDROID_LOG_INFO, "SkyPlayer", "sdl_audio_callback: Decoder serial synchronized to %d, continuing audio processing",
-                   is->auddec.pkt_serial);
-#endif
             return;
         }
 
@@ -3784,6 +4069,25 @@ static int stream_component_open(VideoState *is, int stream_index)
     case AVMEDIA_TYPE_VIDEO:
         is->video_stream = stream_index;
         is->video_st = ic->streams[stream_index];
+
+        // 尝试初始化硬件解码器（三级回退策略）
+        {
+            int decoder_mode = sky_get_decoder_mode(is->skyPlayer);
+            is->hw_decoder_active = 0;
+            is->hw_surface_mode = 0;
+
+            if (decoder_mode != SKY_DECODER_MODE_SOFTWARE) {
+                // 尝试硬件解码（sky_init_hw_decoder 内部实现三级回退）
+                if (sky_init_hw_decoder(is->skyPlayer, ic->streams[stream_index]->codecpar)) {
+                    is->hw_decoder_active = 1;
+                    is->hw_surface_mode = sky_is_surface_mode(is->skyPlayer) ? 1 : 0;
+                    av_log(NULL, AV_LOG_INFO, "Hardware decoder initialized, surface_mode=%d\n",
+                           is->hw_surface_mode);
+                } else {
+                    av_log(NULL, AV_LOG_INFO, "Hardware decoder init failed, falling back to software decoder\n");
+                }
+            }
+        }
 
         if ((ret = decoder_init(&is->viddec, avctx, &is->videoq, is->continue_read_thread)) < 0)
             goto fail;
@@ -4257,8 +4561,9 @@ static int refresh_thread(void *arg)
 {
     VideoState *is = arg;
     double remaining_time = 0.0;
+    int log_counter = 0;
 
-    av_log(NULL, AV_LOG_INFO, "Refresh thread started\n");
+    ALOG_I(FFPLAY_TAG, "[DEBUG] Refresh thread started, is=%p", is);
 
     while (!is->refresh_thread_abort && is && !is->abort_request) {
         if (remaining_time > 0.0)
@@ -4268,10 +4573,16 @@ static int refresh_thread(void *arg)
         // 只处理视频刷新，不处理SDL事件
         if (is->show_mode != SHOW_MODE_NONE && (!is->paused || is->force_refresh)) {
             video_refresh(is, &remaining_time);
+        } else {
+            if (log_counter++ % 100 == 0) {
+                ALOG_I(FFPLAY_TAG, "[DEBUG] refresh_thread: SKIPPED video_refresh, show_mode=%d, paused=%d, force_refresh=%d",
+                       is->show_mode, is->paused, is->force_refresh);
+            }
         }
     }
 
-    av_log(NULL, AV_LOG_INFO, "Refresh thread ended\n");
+    ALOG_I(FFPLAY_TAG, "[DEBUG] Refresh thread ended, abort=%d, abort_request=%d",
+           is->refresh_thread_abort, is->abort_request);
     return 0;
 }
 
@@ -4280,14 +4591,19 @@ static int start_refresh_thread(VideoState *is)
 {
 
     if (is->refresh_tid) {
+        ALOG_W(FFPLAY_TAG, "[DEBUG] start_refresh_thread: already started, skip");
         return 0;
     }
 
     is->refresh_thread_abort = 0;
+    ALOG_I(FFPLAY_TAG, "[DEBUG] start_refresh_thread: calling SDL_CreateThread, is=%p, paused=%d, show_mode=%d",
+           is, is->paused, is->show_mode);
     is->refresh_tid = SDL_CreateThread(refresh_thread, "refresh_thread", is);
     if (!is->refresh_tid) {
+        ALOG_E(FFPLAY_TAG, "[DEBUG] start_refresh_thread: SDL_CreateThread FAILED, error=%s", SDL_GetError());
         return AVERROR(ENOMEM);
     }
+    ALOG_I(FFPLAY_TAG, "[DEBUG] start_refresh_thread: SDL_CreateThread returned tid=%p", (void*)is->refresh_tid);
 
     return 0;
 }

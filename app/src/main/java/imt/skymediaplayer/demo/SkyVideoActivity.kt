@@ -1,6 +1,8 @@
 package imt.skymediaplayer.demo
 
 import android.annotation.SuppressLint
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -13,6 +15,7 @@ import android.widget.FrameLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -79,6 +82,22 @@ class SkyVideoActivity : AppCompatActivity() {
         // 初始化视频播放器
         mSkyVideoView = findViewById(R.id.sky_video_view)
 
+        // 设置渲染后端
+        val rendererBackend = intent.getIntExtra(MainActivity.EXTRA_RENDERER_BACKEND, 0)
+        mSkyVideoView.setRendererBackend(rendererBackend)
+        Log.i(TAG, "Using renderer backend: $rendererBackend")
+
+        // 设置解码模式
+        val decoderMode = intent.getIntExtra(MainActivity.EXTRA_DECODER_MODE, 3)
+        mSkyVideoView.setDecoderMode(decoderMode)
+        Log.i(TAG, "Using decoder mode: $decoderMode")
+
+        // 设置旋转按钮监听
+        setupRotateButton()
+
+        // 设置调试信息按钮监听
+        setupDebugButton()
+
         // 设置 AI 字幕设置变更监听
         setupSubtitleSettingsListener()
 
@@ -107,6 +126,98 @@ class SkyVideoActivity : AppCompatActivity() {
         }
 
         mSkyVideoView.start()
+    }
+
+    /**
+     * 设置旋转按钮监听
+     * 点击切换横竖屏
+     */
+    private fun setupRotateButton() {
+        mSkyVideoView.setOnRotateButtonClickListener {
+            val currentOrientation = resources.configuration.orientation
+            requestedOrientation = if (currentOrientation == Configuration.ORIENTATION_LANDSCAPE) {
+                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            } else {
+                ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            }
+            Log.i(TAG, "Screen rotation toggled, new orientation: $requestedOrientation")
+        }
+    }
+
+    /**
+     * 设置调试信息按钮监听
+     * 点击展示当前渲染配置信息
+     */
+    private fun setupDebugButton() {
+        mSkyVideoView.setOnDebugButtonClickListener {
+            val rendererBackend = mSkyVideoView.getRendererBackend()
+            val decoderMode = mSkyVideoView.getDecoderMode()
+
+            val rendererName = when (rendererBackend) {
+                0 -> "OpenGL ES"
+                1 -> "Vulkan"
+                2 -> "Metal"
+                else -> "Unknown"
+            }
+            val decoderName = if (decoderMode == 3) {
+                val activeMode = mSkyVideoView.getActiveDecoderMode()
+                val activeName = when (activeMode) {
+                    0 -> "硬解直渲"
+                    1 -> "硬解Buffer"
+                    2 -> "软解"
+                    else -> "未知"
+                }
+                "自动 → $activeName"
+            } else {
+                when (decoderMode) {
+                    0 -> "硬解直渲 (Surface)"
+                    1 -> "硬解Buffer"
+                    2 -> "软解 (FFmpeg)"
+                    else -> "Unknown"
+                }
+            }
+
+            val orientation = if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) "横屏" else "竖屏"
+            val isPlaying = mSkyVideoView.isPlaying()
+            val currentPos = mSkyVideoView.getCurrentPosition()
+            val duration = mSkyVideoView.getDuration()
+
+            val debugInfo = "渲染:$rendererName | 解码:$decoderName | $orientation | ${if (isPlaying) "▶" else "⏸"} ${formatDebugTime(currentPos)}/${formatDebugTime(duration)}"
+
+            val alertDialog = AlertDialog.Builder(this)
+                .setTitle("渲染配置信息")
+                .setMessage("渲染后端: $rendererName\n解码模式: $decoderName\n屏幕方向: $orientation\n播放状态: ${if (isPlaying) "播放中" else "暂停"}\n播放进度: ${formatDebugTime(currentPos)} / ${formatDebugTime(duration)}")
+                .setPositiveButton("确定", null)
+                .create()
+
+            alertDialog.window?.let { window ->
+                val layoutParams = window.attributes
+                if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                    layoutParams.width = (resources.displayMetrics.widthPixels * 0.5).toInt()
+                } else {
+                    layoutParams.width = (resources.displayMetrics.widthPixels * 0.85).toInt()
+                }
+                window.attributes = layoutParams
+            }
+
+            alertDialog.show()
+            Log.i(TAG, "Debug info: $debugInfo")
+        }
+    }
+
+    /**
+     * 格式化调试时间显示
+     */
+    private fun formatDebugTime(timeMs: Int): String {
+        val totalSeconds = timeMs / 1000
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+        return if (hours > 0) {
+            String.format("%d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            String.format("%02d:%02d", minutes, seconds)
+        }
     }
 
     /**

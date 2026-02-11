@@ -256,34 +256,25 @@ void SkySLESAudioOut::audioOutputThread() {
 
         // 处理刷新请求 - 优先处理，在其他逻辑之前
         if (need_flush_.load(std::memory_order_relaxed)) {
-            ALOG_I(TAG, "[AUDIO_THREAD] Flushing audio buffers");
-
             // 获取当前播放状态
             SLuint32 currentState;
             (*slPlayItf_)->GetPlayState(slPlayItf_, &currentState);
-            ALOG_I(TAG, "[AUDIO_THREAD] Current play state before flush: %u", currentState);
 
             // 只清空缓冲区，不改变播放状态，避免触发 AudioTrack 重建
             (*slBufferQueueItf_)->Clear(slBufferQueueItf_);
-            ALOG_I(TAG, "[AUDIO_THREAD] Buffer queue cleared without stopping playback");
 
             // 重置缓冲区索引
             next_buffer_index = 0;
-            ALOG_I(TAG, "[AUDIO_THREAD] Reset buffer index to 0");
 
             need_flush_.store(false, std::memory_order_relaxed);
 
             // 确保播放状态保持活跃（如果之前是播放状态）
             if (currentState == SL_PLAYSTATE_PLAYING && !pause_on_.load(std::memory_order_relaxed)) {
                 // 播放状态已经是 PLAYING，无需重新设置
-                ALOG_I(TAG, "[AUDIO_THREAD] Playback state maintained as PLAYING");
             } else if (!pause_on_.load(std::memory_order_relaxed)) {
                 // 只有在必要时才设置播放状态
                 (*slPlayItf_)->SetPlayState(slPlayItf_, SL_PLAYSTATE_PLAYING);
-                ALOG_I(TAG, "[AUDIO_THREAD] Set play state to PLAYING after flush");
             }
-
-            ALOG_I(TAG, "[AUDIO_THREAD] Flush completed, will immediately fill new audio data");
 
             // flush 后立即尝试填充一些缓冲区，确保音频流能够重新启动
             continue;
@@ -420,13 +411,6 @@ void SkySLESAudioOut::pauseAudio(int pauseOn) {
 }
 
 void SkySLESAudioOut::flushAudio() {
-    ALOG_I(TAG, "Flushing audio buffers");
-
-    // 检查音频线程状态
-    ALOG_I(TAG, "Audio thread running: %s, stop flag: %s",
-           is_running_.load(std::memory_order_relaxed) ? "true" : "false",
-           stop_thread_flag_.load(std::memory_order_relaxed) ? "true" : "false");
-
     // 设置刷新标志
     need_flush_.store(true, std::memory_order_relaxed);
 

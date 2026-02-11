@@ -1,0 +1,778 @@
+<mxfile host="app.diagrams.net" modified="2026-02-11T12:00:00.000Z" agent="SkyPlayer" version="24.0.0">
+  <diagram name="硬件解码与Vulkan渲染架构" id="hw-vulkan-arch">
+    <mxGraphModel dx="1200" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title" value="SkyPlayer 硬件解码 + Vulkan 渲染 架构图" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="350" y="10" width="500" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== Layer 1: Kotlin Layer ==================== -->
+        <mxCell id="layer1-bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="50" y="50" width="1100" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="layer1-title" value="Kotlin / Java Layer" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=14;fontStyle=1;fontColor=#1a5276;" vertex="1" parent="1">
+          <mxGeometry x="60" y="55" width="200" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="sky-media-player" value="SkyMediaPlayer.kt&#xa;(播放器实现)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="80" y="85" width="160" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="sky-video-view" value="SkyVideoView.kt&#xa;(视频视图)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="260" y="85" width="140" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="decoder-prefs" value="DecoderPreferences.kt&#xa;(解码器偏好)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="420" y="85" width="160" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="renderer-prefs" value="RendererPreferences.kt&#xa;(渲染器偏好)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="600" y="85" width="160" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="decoder-mode-label" value="DecoderMode:&#xa;AUTO | HW_SURFACE&#xa;HW_BUFFER | SOFTWARE" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="420" y="128" width="160" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="renderer-mode-label" value="RendererBackend:&#xa;OPENGL_ES | VULKAN" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="600" y="128" width="160" height="35" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: Kotlin to JNI -->
+        <mxCell id="arrow1" value="JNI" style="endArrow=classic;startArrow=classic;html=1;rounded=0;strokeWidth=3;strokeColor=#6c8ebf;fontSize=11;fontStyle=1;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="550" y="170" as="sourcePoint" />
+            <mxPoint x="550" y="195" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ==================== Layer 2: JNI Layer ==================== -->
+        <mxCell id="layer2-bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="50" y="195" width="1100" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="layer2-title" value="JNI Bridge Layer (C++)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=14;fontStyle=1;fontColor=#7d6608;" vertex="1" parent="1">
+          <mxGeometry x="60" y="200" width="200" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="jni-bridge" value="skymediaplayer_jni.cpp — setDecoderMode() / setRendererBackend() / _native_setup() ..." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="80" y="220" width="700" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: JNI to Native -->
+        <mxCell id="arrow2" value="" style="endArrow=classic;startArrow=classic;html=1;rounded=0;strokeWidth=3;strokeColor=#d79b00;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="550" y="255" as="sourcePoint" />
+            <mxPoint x="550" y="280" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ==================== Layer 3: Native Layer ==================== -->
+        <mxCell id="layer3-bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffcc99;strokeColor=#d79b00;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="50" y="280" width="1100" height="310" as="geometry" />
+        </mxCell>
+        <mxCell id="layer3-title" value="Native Layer (C++)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=14;fontStyle=1;fontColor=#7d6608;" vertex="1" parent="1">
+          <mxGeometry x="60" y="285" width="200" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- SkyPlayer Core -->
+        <mxCell id="skyplayer-bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="70" y="310" width="200" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="skyplayer-title" value="播放器核心" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="120" y="313" width="100" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="skyplayer-cpp" value="skymediaplayer.cpp&#xa;(SkyPlayer)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="85" y="338" width="170" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="skyplayer-handler" value="SkyDecoderHandler&#xa;SkyVideoOutHandler" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="85" y="372" width="170" height="25" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Decoder Section ===== -->
+        <mxCell id="decoder-bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="290" y="310" width="370" height="270" as="geometry" />
+        </mxCell>
+        <mxCell id="decoder-title" value="🎬 解码器 (Decoder)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="390" y="313" width="170" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- HW Decoder Abstract -->
+        <mxCell id="hw-decoder-abstract" value="SkyHWDecoder (抽象基类)&#xa;configure() | sendPacket() | receiveFrame()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="305" y="340" width="340" height="35" as="geometry" />
+        </mxCell>
+
+        <!-- MediaCodec Decoder -->
+        <mxCell id="mediacodec-decoder" value="SkyMediaCodecDecoder&#xa;(Android MediaCodec NDK)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="305" y="385" width="200" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Supported Codecs -->
+        <mxCell id="codec-h264" value="H.264" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="305" y="435" width="55" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="codec-h265" value="H.265" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="365" y="435" width="55" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="codec-vp8" value="VP8" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="425" y="435" width="45" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="codec-vp9" value="VP9" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="475" y="435" width="45" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="codec-mpeg4" value="MPEG4" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="525" y="435" width="55" height="25" as="geometry" />
+        </mxCell>
+
+        <!-- Decode Modes -->
+        <mxCell id="surface-mode" value="🚀 Surface 直渲模式&#xa;(零拷贝)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="305" y="475" width="140" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="buffer-mode" value="📦 Buffer 输出模式&#xa;(NV12/YUV420P)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="460" y="475" width="140" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Fallback Arrow -->
+        <mxCell id="fallback-label" value="三级回退策略" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontStyle=1;fontColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="305" y="520" width="295" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="fallback-flow" value="HW_SURFACE → HW_BUFFER → SOFTWARE (FFmpeg软解)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="305" y="538" width="295" height="18" as="geometry" />
+        </mxCell>
+
+        <!-- FFmpeg Software Decoder (inside decoder section) -->
+        <mxCell id="sw-decoder" value="FFmpeg 软解 (回退)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="520" y="385" width="125" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Renderer Section ===== -->
+        <mxCell id="renderer-bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="680" y="310" width="450" height="270" as="geometry" />
+        </mxCell>
+        <mxCell id="renderer-title" value="🖥️ 渲染器 (Renderer)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="830" y="313" width="150" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- SkyRenderer Abstract -->
+        <mxCell id="sky-renderer-abstract" value="SkyRenderer (抽象基类)&#xa;displayImage() | isValid() | terminate()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="695" y="340" width="420" height="35" as="geometry" />
+        </mxCell>
+
+        <!-- OpenGL ES Renderer -->
+        <mxCell id="opengl-renderer" value="SkyEGL2Renderer&#xa;(OpenGL ES 2.0)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="695" y="390" width="200" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="gl-yuv420p" value="YUV420P" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="695" y="440" width="55" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="gl-yuv422p" value="YUV422P" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="755" y="440" width="55" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="gl-nv12" value="NV12" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="815" y="440" width="40" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="gl-nv21" value="NV21" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="860" y="440" width="40" height="25" as="geometry" />
+        </mxCell>
+
+        <!-- Vulkan Renderer -->
+        <mxCell id="vulkan-renderer" value="SkyVkRenderer&#xa;(Vulkan 1.x)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="910" y="390" width="200" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="vk-yuv420p" value="YUV420P" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="910" y="440" width="55" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="vk-nv12" value="NV12" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="970" y="440" width="40" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="vk-nv21" value="NV21" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="1015" y="440" width="40" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="vk-rgba" value="RGBA" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="1060" y="440" width="45" height="25" as="geometry" />
+        </mxCell>
+
+        <!-- Vulkan Pipeline Details -->
+        <mxCell id="vk-pipeline-bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4ec;strokeColor=#b85450;strokeDashArray=3;" vertex="1" parent="1">
+          <mxGeometry x="695" y="480" width="420" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="vk-pipeline-title" value="Vulkan 渲染管线" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontStyle=1;fontColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="840" y="483" width="130" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="vk-instance" value="Instance" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="700" y="505" width="60" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="vk-arrow1" value="→" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="760" y="505" width="15" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="vk-device" value="Device" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="775" y="505" width="55" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="vk-arrow2" value="→" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="830" y="505" width="15" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="vk-swapchain" value="Swapchain" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="845" y="505" width="70" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="vk-arrow3" value="→" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="915" y="505" width="15" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="vk-pipeline" value="Pipeline" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="930" y="505" width="60" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="vk-arrow4" value="→" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="990" y="505" width="15" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="vk-render" value="Render" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="1005" y="505" width="55" height="22" as="geometry" />
+        </mxCell>
+
+        <mxCell id="vk-sync-label" value="同步: 双缓冲 + VkFence + VkSemaphore | Shader: 预编译 SPIR-V (YUV→RGB)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="700" y="535" width="410" height="25" as="geometry" />
+        </mxCell>
+
+        <!-- Factory Pattern Arrow -->
+        <mxCell id="factory-arrow" value="工厂模式&#xa;SkyRenderer::create()" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#9673a6;dashed=1;fontSize=9;fontColor=#9673a6;" edge="1" parent="1">
+          <mxGeometry x="-0.2" width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="905" y="375" as="sourcePoint" />
+            <mxPoint x="905" y="340" as="targetPoint" />
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Connection: Decoder to Renderer -->
+        <mxCell id="decode-to-render" value="AVFrame" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#82b366;fontSize=10;fontStyle=1;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="660" y="410" as="sourcePoint" />
+            <mxPoint x="695" y="410" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Connection: SkyPlayer to Decoder -->
+        <mxCell id="player-to-decoder" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#d79b00;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="270" y="370" as="sourcePoint" />
+            <mxPoint x="290" y="370" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Connection: SkyPlayer to Renderer -->
+        <mxCell id="player-to-renderer" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#d79b00;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="270" y="390" as="sourcePoint" />
+            <mxPoint x="680" y="390" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="275" y="390" />
+              <mxPoint x="275" y="310" />
+              <mxPoint x="675" y="310" />
+              <mxPoint x="675" y="390" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Arrow: Native to FFmpeg -->
+        <mxCell id="arrow3-main" value="" style="endArrow=classic;startArrow=classic;html=1;rounded=0;strokeWidth=3;strokeColor=#d79b00;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="400" y="590" as="sourcePoint" />
+            <mxPoint x="400" y="620" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ==================== Layer 4: FFmpeg Layer ==================== -->
+        <mxCell id="layer4-bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="50" y="620" width="1100" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="layer4-title" value="FFmpeg Layer (C)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=14;fontStyle=1;fontColor=#6e1010;" vertex="1" parent="1">
+          <mxGeometry x="60" y="625" width="150" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="ffplay-core" value="ffplay.c&#xa;(解封装 | 解码 | 音画同步)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="80" y="655" width="200" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ffplay-hw-integration" value="video_thread_hw()&#xa;(硬解线程入口)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="300" y="655" width="150" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="c-interface" value="skymediaplayer_interface.h&#xa;sky_init_hw_decoder()&#xa;sky_hw_decoder_send_packet()&#xa;sky_hw_decoder_receive_frame()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="470" y="650" width="220" height="55" as="geometry" />
+        </mxCell>
+
+        <mxCell id="ffmpeg-libs" value="FFmpeg 8.0: libavcodec | libavformat | libavutil | libswscale | libswresample | libavfilter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d4edda;strokeColor=#28a745;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="710" y="660" width="420" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== Legend ==================== -->
+        <mxCell id="legend-bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="750" width="1100" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-new" value="🆕 新增" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="70" y="760" width="70" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-config" value="⚙️ 配置" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="150" y="760" width="70" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-abstract" value="🔷 抽象" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="230" y="760" width="70" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-impl" value="📄 实现" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="310" y="760" width="70" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-ext" value="📦 外部库" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d4edda;strokeColor=#28a745;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="390" y="760" width="80" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-info" value="本次新增: Vulkan 渲染后端 (SkyVkRenderer) + MediaCodec 硬件解码 (SkyMediaCodecDecoder) + 三级回退策略 + 用户偏好配置" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="480" y="760" width="650" height="25" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="硬件解码流程图" id="hw-decode-flow">
+    <mxGraphModel dx="1200" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="flow-title" value="MediaCodec 硬件解码流程图" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="350" y="10" width="400" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- Start -->
+        <mxCell id="start" value="开始播放" style="ellipse;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="480" y="50" width="120" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Check Decoder Mode -->
+        <mxCell id="check-mode" value="用户设置的&#xa;DecoderMode?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="460" y="120" width="160" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="start-to-check" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="start" target="check-mode">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- SOFTWARE path -->
+        <mxCell id="sw-path" value="FFmpeg 软解" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="200" y="140" width="120" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="check-to-sw" value="SOFTWARE" style="endArrow=classic;html=1;strokeWidth=2;fontColor=#666666;fontSize=10;" edge="1" parent="1" source="check-mode" target="sw-path">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Try Surface Mode -->
+        <mxCell id="try-surface" value="尝试 Surface 模式&#xa;AMediaCodec_configure(codec, format, window, ...)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="420" y="240" width="240" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="check-to-surface" value="AUTO / HW_SURFACE" style="endArrow=classic;html=1;strokeWidth=2;fontColor=#b85450;fontSize=10;" edge="1" parent="1" source="check-mode" target="try-surface">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Surface Success? -->
+        <mxCell id="surface-ok" value="成功?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="490" y="320" width="100" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="surface-to-check" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="try-surface" target="surface-ok">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Surface Mode Active -->
+        <mxCell id="surface-active" value="✅ HW_SURFACE 模式&#xa;零拷贝直渲到 ANativeWindow" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="325" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="surface-ok-yes" value="✅ 是" style="endArrow=classic;html=1;strokeWidth=2;fontColor=#82b366;fontSize=10;" edge="1" parent="1" source="surface-ok" target="surface-active">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Try Buffer Mode -->
+        <mxCell id="try-buffer" value="尝试 Buffer 模式&#xa;AMediaCodec_configure(codec, format, null, ...)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="420" y="420" width="240" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="surface-fail" value="❌ 否" style="endArrow=classic;html=1;strokeWidth=2;fontColor=#b85450;fontSize=10;" edge="1" parent="1" source="surface-ok" target="try-buffer">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Buffer Success? -->
+        <mxCell id="buffer-ok" value="成功?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="490" y="500" width="100" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="buffer-to-check" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="try-buffer" target="buffer-ok">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Buffer Mode Active -->
+        <mxCell id="buffer-active" value="✅ HW_BUFFER 模式&#xa;输出 NV12 帧到渲染器" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="505" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="buffer-ok-yes" value="✅ 是" style="endArrow=classic;html=1;strokeWidth=2;fontColor=#82b366;fontSize=10;" edge="1" parent="1" source="buffer-ok" target="buffer-active">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Fallback to Software -->
+        <mxCell id="fallback-sw" value="⚠️ 回退到 FFmpeg 软解&#xa;avcodec_send_packet / avcodec_receive_frame" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="420" y="600" width="240" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="buffer-fail" value="❌ 否" style="endArrow=classic;html=1;strokeWidth=2;fontColor=#b85450;fontSize=10;" edge="1" parent="1" source="buffer-ok" target="fallback-sw">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Decode Loop Section -->
+        <mxCell id="decode-section-title" value="解码循环 (video_thread_hw)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=14;fontStyle=1;fontColor=#1a5276;" vertex="1" parent="1">
+          <mxGeometry x="50" y="700" width="300" height="25" as="geometry" />
+        </mxCell>
+
+        <mxCell id="send-packet" value="1. sendPacket(AVPacket)&#xa;AvcC→AnnexB 转换&#xa;AMediaCodec_queueInputBuffer()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="50" y="740" width="220" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="receive-frame" value="2. receiveFrame(AVFrame)&#xa;AMediaCodec_dequeueOutputBuffer()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="300" y="740" width="220" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="surface-render" value="3a. Surface模式&#xa;releaseOutputBuffer(true)&#xa;→ 直渲到屏幕" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="550" y="730" width="170" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="buffer-render" value="3b. Buffer模式&#xa;fillFrameFromBuffer()&#xa;→ OpenGL/Vulkan 渲染" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="550" y="790" width="170" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="send-to-receive" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="send-packet" target="receive-frame">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="receive-to-surface" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="receive-frame" target="surface-render">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="receive-to-buffer" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="receive-frame" target="buffer-render">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- sw-path to decode loop -->
+        <mxCell id="sw-to-end" value="avcodec_send_packet()&#xa;avcodec_receive_frame()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="50" y="600" width="180" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="sw-path-to-end" value="" style="endArrow=classic;html=1;strokeWidth=2;dashed=1;" edge="1" parent="1" source="sw-path" target="sw-to-end">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="Vulkan渲染流程图" id="vulkan-render-flow">
+    <mxGraphModel dx="1200" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="800" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="vk-flow-title" value="Vulkan 渲染一帧视频的完整流程" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="300" y="10" width="500" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- Step 1: displayImage called -->
+        <mxCell id="step1" value="displayImage(window, frame)&#xa;渲染入口" style="ellipse;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="440" y="50" width="220" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Step 2: Check init -->
+        <mxCell id="step2" value="已初始化?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="490" y="130" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="s1-s2" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="step1" target="step2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Init Pipeline -->
+        <mxCell id="init-pipeline" value="完整初始化&#xa;Instance → PhysicalDevice → Device&#xa;→ Swapchain → RenderPass → Pipeline&#xa;→ Framebuffers → CommandBuffers → SyncObjects" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="150" y="120" width="280" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="s2-init" value="否" style="endArrow=classic;html=1;strokeWidth=2;fontColor=#b85450;fontSize=10;" edge="1" parent="1" source="step2" target="init-pipeline">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Step 3: Check format -->
+        <mxCell id="step3" value="像素格式变化?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="475" y="230" width="150" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="s2-s3" value="是" style="endArrow=classic;html=1;strokeWidth=2;fontSize=10;" edge="1" parent="1" source="step2" target="step3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="init-to-s3" value="" style="endArrow=classic;html=1;strokeWidth=2;dashed=1;" edge="1" parent="1" source="init-pipeline" target="step3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Rebuild textures -->
+        <mxCell id="rebuild-tex" value="重建纹理资源&#xa;+ 选择对应 Shader" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="200" y="235" width="180" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-rebuild" value="是" style="endArrow=classic;html=1;strokeWidth=2;fontColor=#9673a6;fontSize=10;" edge="1" parent="1" source="step3" target="rebuild-tex">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Step 4: Upload texture -->
+        <mxCell id="step4" value="上传纹理数据&#xa;映射 Staging Buffer → 复制帧数据&#xa;→ 转换 Layout → Buffer→Image 拷贝" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="420" y="330" width="260" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-s4" value="否" style="endArrow=classic;html=1;strokeWidth=2;fontSize=10;" edge="1" parent="1" source="step3" target="step4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="rebuild-to-s4" value="" style="endArrow=classic;html=1;strokeWidth=2;dashed=1;" edge="1" parent="1" source="rebuild-tex" target="step4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Step 5: Wait fence -->
+        <mxCell id="step5" value="vkWaitForFences()&#xa;等待前一帧完成" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="460" y="420" width="180" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="s4-s5" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="step4" target="step5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Step 6: Acquire image -->
+        <mxCell id="step6" value="vkAcquireNextImageKHR()&#xa;获取 Swapchain 图像" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="460" y="490" width="180" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-s6" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="step5" target="step6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Step 7: Record commands -->
+        <mxCell id="step7" value="录制命令缓冲&#xa;BeginRenderPass → BindPipeline&#xa;→ BindDescriptorSets → Draw(4 vertices)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="420" y="565" width="260" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="s6-s7" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="step6" target="step7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Step 8: Submit -->
+        <mxCell id="step8" value="vkQueueSubmit()&#xa;提交渲染命令" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="460" y="655" width="180" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="s7-s8" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="step7" target="step8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Step 9: Present -->
+        <mxCell id="step9" value="vkQueuePresentKHR()&#xa;展示到屏幕" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="440" y="730" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="s8-s9" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="step8" target="step9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Sync annotations -->
+        <mxCell id="sync-box" value="同步机制&#xa;&#xa;• imageAvailableSemaphore: 图像获取完成&#xa;• renderFinishedSemaphore: 渲染完成&#xa;• inFlightFence: CPU 等待 GPU&#xa;• MAX_FRAMES_IN_FLIGHT = 2 (双缓冲)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="750" y="450" width="300" height="110" as="geometry" />
+        </mxCell>
+
+        <!-- Shader annotation -->
+        <mxCell id="shader-box" value="SPIR-V Shader (预编译)&#xa;&#xa;• YUV420P: 3纹理 (Y+U+V) → RGB&#xa;• NV12: 2纹理 (Y+UV) → RGB&#xa;• NV21: 2纹理 (Y+VU) → RGB&#xa;• RGBA: 1纹理 直接输出" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4ec;strokeColor=#b85450;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="750" y="580" width="300" height="100" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="硬解直渲音画同步流程" id="hw-surface-sync">
+    <mxGraphModel dx="1400" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="sync-title" value="Surface 直渲模式音画同步流程" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="450" y="10" width="500" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- Problem Description -->
+        <mxCell id="problem-box" value="修复前的问题：receiveFrame 内部直接调用 releaseOutputBuffer(true) 渲染到 Surface&#xa;没有任何同步控制，导致画面比声音快很多" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;fontStyle=1;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="50" y="50" width="700" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Start Node -->
+        <mxCell id="start" value="video_thread_hw 循环" style="ellipse;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="130" width="160" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Pause Check -->
+        <mxCell id="pause-check" value="is->paused?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="70" y="210" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="start-to-pause" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="start" target="pause-check">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Pause Sleep -->
+        <mxCell id="pause-sleep" value="暂停中&#xa;av_usleep(10000)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="70" y="300" width="120" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="pause-yes" value="是" style="endArrow=classic;html=1;strokeWidth=2;fontSize=10;" edge="1" parent="1" source="pause-check" target="pause-sleep">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Pause Loop Back -->
+        <mxCell id="pause-loop" value="" style="endArrow=classic;html=1;strokeWidth=2;dashed=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="pause-sleep" target="start">
+          <mxGeometry x="-60" y="20" relative="1" as="geometry">
+            <mxPoint x="130" y="325" as="sourcePoint" />
+            <mxPoint x="70" y="325" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="30" y="325" />
+              <mxPoint x="30" y="155" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- dequeueFrame -->
+        <mxCell id="dequeue" value="dequeueFrame()&#xa;1. AMediaCodec_dequeueOutputBuffer()&#xa;2. 获取帧元数据(PTS/宽高)&#xa;3. 保存 outputIndex&#xa;4. ❌ 不调用 releaseOutputBuffer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="250" y="195" width="220" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="pause-no" value="否" style="endArrow=classic;html=1;strokeWidth=2;fontSize=10;" edge="1" parent="1" source="pause-check" target="dequeue">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Has Frame? -->
+        <mxCell id="has-frame" value="取到帧?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="510" y="210" width="100" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="dequeue-to-check" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="dequeue" target="has-frame">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Loop Back if no frame -->
+        <mxCell id="no-frame-loop" value="" style="endArrow=classic;html=1;strokeWidth=2;dashed=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="has-frame" target="start">
+          <mxGeometry x="100" y="-40" relative="1" as="geometry">
+            <mxPoint x="560" y="210" as="sourcePoint" />
+            <mxPoint x="660" y="170" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="660" y="240" />
+              <mxPoint x="660" y="155" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="no-frame-label" value="否" style="endArrow=none;html=1;strokeWidth=2;fontSize=10;" edge="1" parent="1" source="has-frame">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Calculate Sync -->
+        <mxCell id="calc-sync" value="计算同步&#xa;diff = frame_pts - audio_clock&#xa;(视频 PTS - 音频主时钟)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="660" y="200" width="200" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="frame-yes" value="是" style="endArrow=classic;html=1;strokeWidth=2;fontColor=#82b366;fontSize=10;" edge="1" parent="1" source="has-frame" target="calc-sync">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Sync Decision -->
+        <mxCell id="sync-decision" value="同步判断&#xa;diff 值范围?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="690" y="310" width="140" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="calc-to-decision" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="calc-sync" target="sync-decision">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Branch 1: Too Early (Wait) -->
+        <mxCell id="too-early" value="diff > 10ms&#xa;视频超前" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="300" y="320" width="140" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="decision-early" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="sync-decision" target="too-early">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Wait Action -->
+        <mxCell id="wait-action" value="av_usleep(diff * 1000)&#xa;等待音频追上" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="300" y="400" width="140" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="early-to-wait" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="too-early" target="wait-action">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Branch 2: Normal (Render) -->
+        <mxCell id="normal" value="-100ms ≤ diff ≤ 10ms&#xa;正常范围" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="690" y="420" width="140" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="decision-normal" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="sync-decision" target="normal">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Branch 3: Too Late (Drop) -->
+        <mxCell id="too-late" value="diff &lt; -100ms&#xa;视频落后" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="950" y="320" width="140" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="decision-late" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="sync-decision" target="too-late">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Drop Action -->
+        <mxCell id="drop-action" value="丢帧处理&#xa;不调用 renderOutputBuffer&#xa;pending buffer 在下次 dequeue 释放" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="950" y="400" width="180" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="late-to-drop" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="too-late" target="drop-action">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- renderOutputBuffer -->
+        <mxCell id="render" value="renderOutputBuffer()&#xa;AMediaCodec_releaseOutputBuffer(outputIndex, true)&#xa;渲染到 Surface" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="660" y="510" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="normal-to-render" value="" style="endArrow=classic;html=1;strokeWidth=2;fontColor=#82b366;" edge="1" parent="1" source="normal" target="render">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="wait-to-render" value="" style="endArrow=classic;html=1;strokeWidth=2;" edge="1" parent="1" source="wait-action" target="render">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="370" y="450" as="sourcePoint" />
+            <mxPoint x="660" y="540" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="370" y="540" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Loop Back to Start -->
+        <mxCell id="loop-back" value="" style="endArrow=classic;html=1;strokeWidth=2;dashed=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="render" target="start">
+          <mxGeometry x="-100" y="20" relative="1" as="geometry">
+            <mxPoint x="760" y="510" as="sourcePoint" />
+            <mxPoint x="860" y="155" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="860" y="540" />
+              <mxPoint x="860" y="155" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Drop Loop Back -->
+        <mxCell id="drop-loop" value="" style="endArrow=classic;html=1;strokeWidth=2;dashed=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="drop-action" target="start">
+          <mxGeometry x="-120" y="10" relative="1" as="geometry">
+            <mxPoint x="1040" y="400" as="sourcePoint" />
+            <mxPoint x="1140" y="155" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="1140" y="430" />
+              <mxPoint x="1140" y="155" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Legend Box -->
+        <mxCell id="legend-title" value="配色说明" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="50" width="80" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-blue" value="正常流程" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="75" width="100" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-red" value="问题/关键" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="105" width="100" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-green" value="成功/渲染" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="135" width="100" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-yellow" value="判断节点" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="165" width="100" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-purple" value="等待处理" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="195" width="100" height="25" as="geometry" />
+        </mxCell>
+
+        <!-- Algorithm Summary -->
+        <mxCell id="summary-box" value="核心算法：两步解耦&#xa;&#xa;Step 1: dequeueFrame() - 只取帧元数据，不渲染&#xa;Step 2: renderOutputBuffer() - 同步后渲染&#xa;&#xa;同步策略：&#xa;• 超前 >10ms: 等待音频追上&#xa;• 正常 [-100,10]ms: 立即渲染&#xa;• 落后 &lt;-100ms: 丢帧追赶" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="250" y="600" width="280" height="120" as="geometry" />
+        </mxCell>
+
+        <!-- Key Points -->
+        <mxCell id="key-points" value="关键实现：&#xa;&#xa;1. 保存 outputIndex 用于后续渲染&#xa;2. 暂停状态检查避免无效 dequeue&#xa;3. pending buffer 在下次 dequeue 时自动释放&#xa;4. 音频主时钟 (audio_clock) 为基准" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="550" y="600" width="280" height="120" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -18,7 +18,9 @@
 - **完整的播放流程**：从解封装、解码、音画同步到渲染的全链路实现
 
 #### 2. 针对 Android 平台深度优化
-- **OpenGL ES 2.0 渲染**：5 种独立优化的渲染器，支持 YUV420P/422P、NV12/21、RGBA
+- **双渲染后端**：OpenGL ES 2.0 + Vulkan，运行时切换，5 种像素格式（YUV420P/422P、NV12/21、RGBA）
+- **MediaCodec 硬件解码**：利用 SoC 专用硬件加速，CPU 占用从 100%+ 降至 5% 以下，支持 Surface 零拷贝直渲和 Buffer 输出两种模式，三级自动回退（HW_SURFACE → HW_BUFFER → SOFTWARE）保证兼容性
+- **Vulkan 渲染后端**：显式控制零驱动开销、原生多线程支持、预编译 SPIR-V Shader、精确内存管理，Android 下一代图形 API
 - **OpenSL ES 音频**：超低延迟音频输出（< 20ms），远优于 AudioTrack
 - **安全的 JNI 设计**：线程本地存储（TLS）、自动 attach/detach、弱引用防泄漏，避免常见的 JNI 内存泄漏和崩溃问题
 
@@ -43,7 +45,7 @@
 - **可配置**：支持处理间隔、推理设备（CPU/GPU）、语言等参数调节
 
 #### 6. 优秀的学习价值
-- **完整的技术栈**：涵盖 FFmpeg、JNI、OpenGL ES、OpenSL ES、Whisper AI
+- **完整的技术栈**：涵盖 FFmpeg、JNI、OpenGL ES、Vulkan、MediaCodec、OpenSL ES、Whisper AI
 - **可运行的示例**：app 模块提供完整的 Demo
 - **教学级代码**：适合学习音视频开发的完整实现
 
@@ -69,7 +71,8 @@ SkyPlayer 采用清晰的分层架构设计：
 
 #### Native 层
 - **播放器核心**（`skymediaplayer.cpp`）：封装 ffplay，提供播放控制
-- **渲染器**（`skyrenderer.cpp` + 5 个 EGL2 渲染器）：硬件加速渲染
+- **渲染器**（`renderer/`）：OpenGL ES 2.0（5 种像素格式）+ Vulkan 渲染后端，工厂模式透明切换
+- **硬件解码器**（`decoder/`）：MediaCodec 硬解抽象基类 + Android 实现，Surface 直渲零拷贝 + Buffer 输出双模式
 - **音频输出**（`skyaudio.cpp`）：OpenSL ES 低延迟播放
 - **消息队列**（`sky_msg_queue.cpp`）：异步事件处理
 - **Whisper 字幕**：独立解码流超前解码 + whisper.cpp 端侧推理 + PTS 同步展示
@@ -319,6 +322,9 @@ cd SkyPlayer
 - [x] **HLS 直播流支持（m3u8）** 🎉
 - [x] **OpenSSL 集成（HTTPS 加密传输）** 🎉
 - [x] **Whisper AI 实时字幕（端侧推理、PTS 同步）** 🎉
+- [x] **MediaCodec 硬件解码（三级回退：HW_SURFACE → HW_BUFFER → SOFTWARE）** 🎉
+- [x] **Vulkan 渲染后端（预编译 SPIR-V Shader、双缓冲同步）** 🎉
+- [x] **Surface 直渲音画同步（两步解耦：dequeueFrame → renderOutputBuffer）** 🎉
 
 ### 进行中 🚧
 - [ ] RTMP 直播流支持
@@ -326,7 +332,6 @@ cd SkyPlayer
 - [ ] 网络状态监控和自适应
 
 ### 计划中 📋
-- [ ] 硬件解码支持（MediaCodec）
 - [ ] 倍速播放
 - [ ] 截图功能
 - [ ] 视频录制
@@ -339,6 +344,8 @@ cd SkyPlayer
 - [ffplay](https://ffmpeg.org/ffplay.html) - FFmpeg 的播放器示例，本项目的核心基础
 - [ijkplayer](https://github.com/bilibili/ijkplayer) - Bilibili 开源的基于 FFmpeg 的播放器，提供了重要的实现参考
 - [SDL](https://www.libsdl.org/) - Simple DirectMedia Layer，ffplay 的原始渲染层
+- [Vulkan](https://www.vulkan.org/) - 下一代图形 API
+- [Android NDK MediaCodec](https://developer.android.com/ndk/reference/group/media) - 硬件解码接口
 
 ## 🌟 Star History
 

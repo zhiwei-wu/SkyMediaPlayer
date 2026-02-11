@@ -22,7 +22,7 @@ SkyPlayer* createSkyPlayer() {
 //     std::call_once(ffmpegLogInitFlag, setupFfmpegLogCallback);
 
     auto* player = new SkyPlayer();
-    player->getSkyVideoOutHandler().setSkyRenderer(std::make_unique<SkyEGL2Renderer>());
+    // 不再硬编码渲染器，渲染器将在 setWindow 时根据 rendererBackend_ 延迟创建
     return player;
 }
 
@@ -52,6 +52,11 @@ bool sky_display_image(void *player, AVFrame *frame) {
     }
     if (ret && !skyPlayer->firstVideoFrameRendered) {
         skyPlayer->firstVideoFrameRendered = true;
+        const char *pixFmtName = av_get_pix_fmt_name(static_cast<AVPixelFormat>(frame->format));
+        ALOG_I(TAG, "========== FIRST FRAME RENDERED ==========");
+        ALOG_I(TAG, "  Resolution: %dx%d", frame->width, frame->height);
+        ALOG_I(TAG, "  Pixel Format: %s (%d)", pixFmtName ? pixFmtName : "unknown", frame->format);
+        ALOG_I(TAG, "==========================================");
         skyPlayer->postMessage(SKY_MSG_VIDEO_RENDERING_START);
     }
     return ret;
@@ -110,8 +115,6 @@ void sky_flush_audio(void *player) {
     auto& skyAudioOutHandler = skyPlayer->getSkyAudioOutHandler();
 
     skyAudioOutHandler.flushAudio();
-
-    ALOG_I(TAG, "sky_flush_audio() audio buffers flushed");
 }
 
 // ============================================================================
@@ -256,8 +259,8 @@ void SkyVideoOutHandler::setWindow(EGLNativeWindowType window) {
 
         // 重新创建渲染器，确保Surface重建后能正常渲染
         if (!renderer_) {
-            ALOG_I(TAG, "Creating new renderer for window");
-            renderer_ = std::make_unique<SkyEGL2Renderer>();
+            ALOG_I(TAG, "Creating new renderer for window, backend=%d", static_cast<int>(rendererBackend_));
+            renderer_ = SkyRenderer::create(rendererBackend_);
         }
 
         ALOG_I(TAG, "Window set successfully, renderer ready: %s", renderer_ ? "true" : "false");
@@ -404,17 +407,20 @@ void SkyPlayer::cleanup() {
     messageQueue_.abort();
     messageQueue_.destroy();
 
-    // 2. 停止播放并清理 ffplay 资源
+    // 2. 先关闭音频输出（停止 audio_thread_），必须在 stream_close 之前
+    //    因为 audio_thread_ 的回调 sdl_audio_callback 会访问 ffplay 的
+    //    sampq.mutex 等资源，如果先调用 stream_close 销毁这些 mutex，
+    //    audio_thread_ 仍在运行时就会触发 "destroyed mutex" 崩溃
+    skyAudioOutHandler_.cleanup();
+
+    // 3. 停止播放并清理 ffplay 资源（销毁 read_thread、decoder、queue 等）
     if (is) {
         stream_close(is);
         is = nullptr;
     }
 
-    // 3. 释放视频输出资源
+    // 4. 释放视频输出资源
     skyVideoOutHandler_.releaseResources();
-
-    // 4. 释放音频输出资源
-    skyAudioOutHandler_.cleanup();
 
     // 5. 释放数据源
     if (data_source_) {
@@ -752,8 +758,238 @@ int SkyPlayer::setAudioFilter(const char* filters) {
     return ret;
 }
 
+void SkyPlayer::setRendererBackend(RendererBackend backend) {
+    std::lock_guard<std::mutex> lock(mtx);
+    rendererBackend_ = backend;
+    skyVideoOutHandler_.setRendererBackend(backend);
+    ALOG_I(TAG, "setRendererBackend() backend=%d", static_cast<int>(backend));
+}
+
+void SkyPlayer::setDecoderMode(DecoderMode mode) {
+    std::lock_guard<std::mutex> lock(mtx);
+    decoderMode_ = mode;
+    skyDecoderHandler_.setDecoderMode(mode);
+    ALOG_I(TAG, "setDecoderMode() mode=%d", static_cast<int>(mode));
+}
+
 void SkyPlayer::stop() {
 
+}
+
+// ============================================================================
+// SkyDecoderHandler Implementation
+// ============================================================================
+
+void SkyDecoderHandler::setDecoderMode(DecoderMode mode) {
+    std::lock_guard<std::mutex> lock(mtx);
+    requestedMode_ = mode;
+    ALOG_I(TAG, "SkyDecoderHandler setDecoderMode: %d", static_cast<int>(mode));
+}
+
+DecoderMode SkyDecoderHandler::getActiveDecoderMode() const {
+    if (hwDecoder_) {
+        return hwDecoder_->getActiveMode();
+    }
+    return DecoderMode::SOFTWARE;
+}
+
+bool SkyDecoderHandler::initHWDecoder(AVCodecParameters *codecpar, void *surface) {
+    std::lock_guard<std::mutex> lock(mtx);
+
+    // 如果用户明确选择软解，直接返回 false
+    if (requestedMode_ == DecoderMode::SOFTWARE) {
+        ALOG_I(TAG, "User requested SOFTWARE mode, skipping HW decoder");
+        return false;
+    }
+
+    // 释放之前的硬解器
+    if (hwDecoder_) {
+        hwDecoder_->release();
+        hwDecoder_.reset();
+    }
+
+    // 创建平台硬件解码器
+    hwDecoder_ = SkyHWDecoder::create();
+    if (!hwDecoder_) {
+        ALOG_W(TAG, "Failed to create HW decoder, falling back to SOFTWARE");
+        return false;
+    }
+
+    // 根据用户请求的模式决定是否传入 Surface
+    void *configSurface = nullptr;
+    if (requestedMode_ == DecoderMode::AUTO || requestedMode_ == DecoderMode::HW_SURFACE) {
+        configSurface = surface;
+    }
+    // HW_BUFFER 模式不传 Surface
+
+    // configure 内部实现三级回退：Surface → Buffer → 返回 false
+    if (!hwDecoder_->configure(codecpar, configSurface)) {
+        ALOG_W(TAG, "HW decoder configure failed, falling back to SOFTWARE");
+        hwDecoder_.reset();
+        return false;
+    }
+
+    // 启动硬件解码器
+    if (!hwDecoder_->start()) {
+        ALOG_E(TAG, "HW decoder start failed, falling back to SOFTWARE");
+        hwDecoder_->release();
+        hwDecoder_.reset();
+        return false;
+    }
+
+    ALOG_I(TAG, "HW decoder initialized successfully, active mode: %s",
+           hwDecoder_->isSurfaceMode() ? "HW_SURFACE" : "HW_BUFFER");
+    return true;
+}
+
+int SkyDecoderHandler::sendPacket(AVPacket *packet) {
+    if (!hwDecoder_) {
+        return AVERROR(EINVAL);
+    }
+    return hwDecoder_->sendPacket(packet);
+}
+
+int SkyDecoderHandler::receiveFrame(AVFrame *frame) {
+    if (!hwDecoder_) {
+        return AVERROR(EINVAL);
+    }
+    return hwDecoder_->receiveFrame(frame);
+}
+
+int SkyDecoderHandler::dequeueFrame(AVFrame *frame) {
+    if (!hwDecoder_) {
+        return AVERROR(EINVAL);
+    }
+    return hwDecoder_->dequeueFrame(frame);
+}
+
+bool SkyDecoderHandler::renderOutputBuffer() {
+    if (!hwDecoder_) {
+        return false;
+    }
+    return hwDecoder_->renderOutputBuffer();
+}
+
+void SkyDecoderHandler::flush() {
+    std::lock_guard<std::mutex> lock(mtx);
+    if (hwDecoder_) {
+        hwDecoder_->flush();
+    }
+}
+
+void SkyDecoderHandler::release() {
+    std::lock_guard<std::mutex> lock(mtx);
+    if (hwDecoder_) {
+        hwDecoder_->release();
+        hwDecoder_.reset();
+    }
+    ALOG_I(TAG, "SkyDecoderHandler released");
+}
+
+bool SkyDecoderHandler::isHWDecoderActive() const {
+    return hwDecoder_ != nullptr;
+}
+
+bool SkyDecoderHandler::isSurfaceMode() const {
+    return hwDecoder_ && hwDecoder_->isSurfaceMode();
+}
+
+// ============================================================================
+// C Interface for ffplay.c — Hardware Decoder
+// ============================================================================
+
+int sky_get_decoder_mode(void *player) {
+    if (!player) {
+        return SKY_DECODER_MODE_SOFTWARE;
+    }
+    auto *skyPlayer = reinterpret_cast<SkyPlayer *>(player);
+    return static_cast<int>(skyPlayer->getSkyDecoderHandler().getDecoderMode());
+}
+
+bool sky_init_hw_decoder(void *player, AVCodecParameters *codecpar) {
+    if (!player || !codecpar) {
+        return false;
+    }
+    auto *skyPlayer = reinterpret_cast<SkyPlayer *>(player);
+
+    // 从 SkyVideoOutHandler 获取当前 ANativeWindow（Surface 直渲模式需要）
+    void *surface = skyPlayer->getSkyVideoOutHandler().getWindow();
+    if (!surface) {
+        ALOG_W(TAG, "sky_init_hw_decoder: window is null, Surface mode will be unavailable");
+    }
+    return skyPlayer->getSkyDecoderHandler().initHWDecoder(codecpar, surface);
+}
+
+bool sky_init_hw_decoder_with_surface(void *player, AVCodecParameters *codecpar, void *surface) {
+    if (!player || !codecpar) {
+        return false;
+    }
+    auto *skyPlayer = reinterpret_cast<SkyPlayer *>(player);
+    return skyPlayer->getSkyDecoderHandler().initHWDecoder(codecpar, surface);
+}
+
+int sky_hw_decoder_send_packet(void *player, AVPacket *packet) {
+    if (!player) {
+        return AVERROR(EINVAL);
+    }
+    auto *skyPlayer = reinterpret_cast<SkyPlayer *>(player);
+    return skyPlayer->getSkyDecoderHandler().sendPacket(packet);
+}
+
+int sky_hw_decoder_receive_frame(void *player, AVFrame *frame) {
+    if (!player) {
+        return AVERROR(EINVAL);
+    }
+    auto *skyPlayer = reinterpret_cast<SkyPlayer *>(player);
+    return skyPlayer->getSkyDecoderHandler().receiveFrame(frame);
+}
+
+int sky_hw_decoder_dequeue_frame(void *player, AVFrame *frame) {
+    if (!player) {
+        return AVERROR(EINVAL);
+    }
+    auto *skyPlayer = reinterpret_cast<SkyPlayer *>(player);
+    return skyPlayer->getSkyDecoderHandler().dequeueFrame(frame);
+}
+
+bool sky_hw_decoder_render_output(void *player) {
+    if (!player) {
+        return false;
+    }
+    auto *skyPlayer = reinterpret_cast<SkyPlayer *>(player);
+    return skyPlayer->getSkyDecoderHandler().renderOutputBuffer();
+}
+
+void sky_hw_decoder_flush(void *player) {
+    if (!player) {
+        return;
+    }
+    auto *skyPlayer = reinterpret_cast<SkyPlayer *>(player);
+    skyPlayer->getSkyDecoderHandler().flush();
+}
+
+void sky_hw_decoder_release(void *player) {
+    if (!player) {
+        return;
+    }
+    auto *skyPlayer = reinterpret_cast<SkyPlayer *>(player);
+    skyPlayer->getSkyDecoderHandler().release();
+}
+
+bool sky_is_hw_decoder_active(void *player) {
+    if (!player) {
+        return false;
+    }
+    auto *skyPlayer = reinterpret_cast<SkyPlayer *>(player);
+    return skyPlayer->getSkyDecoderHandler().isHWDecoderActive();
+}
+
+bool sky_is_surface_mode(void *player) {
+    if (!player) {
+        return false;
+    }
+    auto *skyPlayer = reinterpret_cast<SkyPlayer *>(player);
+    return skyPlayer->getSkyDecoderHandler().isSurfaceMode();
 }
 
 namespace {

@@ -9,6 +9,9 @@
 #include "skyrenderer.h"
 #include "skyaudio.h"
 #include "sky_msg_queue.h"
+#include "sky_renderer_types.h"
+#include "sky_decoder_types.h"
+#include "sky_hw_decoder.h"
 
 #define TAG "SkyPlayer"
 
@@ -75,11 +78,21 @@ private:
 
 class SkyVideoOutHandler {
 public:
-    // 添加构造函数，正确初始化成员变量
-    SkyVideoOutHandler() : window_(nullptr) {}
+    SkyVideoOutHandler() : window_(nullptr), rendererBackend_(RendererBackend::OPENGL_ES) {}
 
     void setSkyRenderer(std::unique_ptr<SkyRenderer> renderer) {
         renderer_ = std::move(renderer);
+    }
+
+    void setRendererBackend(RendererBackend backend) {
+        if (rendererBackend_ != backend) {
+            rendererBackend_ = backend;
+            // 重置已有渲染器，下次 setWindow 时将根据新后端重新创建
+            if (renderer_) {
+                renderer_->terminate();
+                renderer_.reset();
+            }
+        }
     }
 
     void setWindow(EGLNativeWindowType window);
@@ -88,13 +101,19 @@ public:
 
     void releaseResources();
 
+    /**
+     * 获取当前 ANativeWindow 指针（用于 Surface 直渲模式）
+     * @return ANativeWindow 指针，可能为 nullptr
+     */
+    EGLNativeWindowType getWindow() const { return window_; }
+
 public:
     std::mutex mtx;
 
 private:
     EGLNativeWindowType window_;
+    RendererBackend rendererBackend_;
     std::unique_ptr<SkyRenderer> renderer_;
-    std::unique_ptr<SkyVideoOutHandler> skyVideoOutHandler_;
 };
 
 enum class AudioOutType {
@@ -178,13 +197,95 @@ enum class MEDIA_INFO_TYPE {
     MEDIA_INFO_MEDIA_ACCURATE_SEEK_COMPLETE = 10100
 };
 
+/**
+ * 硬件解码管理器
+ * 管理硬件解码器的生命周期，提供给 ffplay.c 调用的 C 接口
+ */
+class SkyDecoderHandler {
+public:
+    SkyDecoderHandler() = default;
+
+    /**
+     * 设置用户期望的解码模式（必须在 prepareAsync 之前调用）
+     */
+    void setDecoderMode(DecoderMode mode);
+
+    /**
+     * 获取用户设置的解码模式
+     */
+    DecoderMode getDecoderMode() const { return requestedMode_; }
+
+    /**
+     * 获取实际生效的解码模式（经过回退策略后的结果）
+     */
+    DecoderMode getActiveDecoderMode() const;
+
+    /**
+     * 初始化硬件解码器（由 ffplay.c 的 stream_component_open 调用）
+     * 实现三级回退策略：HW_SURFACE → HW_BUFFER → SOFTWARE
+     * @param codecpar 编解码器参数
+     * @param surface  ANativeWindow 指针（可为 nullptr）
+     * @return true 硬解初始化成功，false 需要回退到软解
+     */
+    bool initHWDecoder(AVCodecParameters *codecpar, void *surface);
+
+    /**
+     * 向硬件解码器投喂数据包
+     * @return 0 成功, AVERROR(EAGAIN) 需要先取帧, 其他负值表示错误
+     */
+    int sendPacket(AVPacket *packet);
+
+    /**
+     * 从硬件解码器获取解码帧
+     * @return 0 成功, AVERROR(EAGAIN) 需要先投喂, AVERROR_EOF 结束
+     */
+    int receiveFrame(AVFrame *frame);
+
+    /**
+     * 从硬件解码器取出帧但不渲染（仅 Surface 模式）
+     * @return 0 成功, AVERROR(EAGAIN) 需要先投喂, AVERROR_EOF 结束
+     */
+    int dequeueFrame(AVFrame *frame);
+
+    /**
+     * 将已取出的帧渲染到 Surface（仅 Surface 模式）
+     * @return true 渲染成功
+     */
+    bool renderOutputBuffer();
+
+    /**
+     * 刷新硬件解码器（Seek 时调用）
+     */
+    void flush();
+
+    /**
+     * 释放硬件解码器资源
+     */
+    void release();
+
+    /**
+     * 硬件解码器是否已激活
+     */
+    bool isHWDecoderActive() const;
+
+    /**
+     * 是否处于 Surface 直渲模式
+     */
+    bool isSurfaceMode() const;
+
+public:
+    std::mutex mtx;
+
+private:
+    DecoderMode requestedMode_ = DecoderMode::AUTO;
+    std::unique_ptr<SkyHWDecoder> hwDecoder_;
+};
+
 class SkyPlayer {
 public:
-    // 添加构造函数和析构函数声明
     SkyPlayer();
     ~SkyPlayer();
 
-    // 添加清理方法
     void cleanup();
 
     void setWeakJavaPlayerPtr(void* ptr) {
@@ -194,7 +295,6 @@ public:
         return weakJavaPlayer;
     }
 
-    // 获取方法管理器
     SkyMediaPlayerMethod& getMethodManager() {
         return methodManager_;
     }
@@ -207,13 +307,17 @@ public:
         return skyAudioOutHandler_;
     }
 
-    // 添加播放控制方法
+    SkyDecoderHandler& getSkyDecoderHandler() {
+        return skyDecoderHandler_;
+    }
+
+    // 播放控制方法
     void start();
     void pause();
     void seekTo(int64_t pos);
     void stop();
 
-    // 添加状态查询方法
+    // 状态查询方法
     bool isPlaying();
     int64_t getCurrentPosition();
     int64_t getDuration();
@@ -221,7 +325,15 @@ public:
     // 设置动态音频滤镜
     int setAudioFilter(const char* filters);
 
-    // 添加JNI相关方法
+    // 设置渲染后端（必须在 prepareAsync 之前调用）
+    void setRendererBackend(RendererBackend backend);
+    RendererBackend getRendererBackend() const { return rendererBackend_; }
+
+    // 设置解码模式（必须在 prepareAsync 之前调用）
+    void setDecoderMode(DecoderMode mode);
+    DecoderMode getDecoderMode() const { return decoderMode_; }
+
+    // JNI 相关方法
     void setDataSource(const char* path);
     const char *getDataSource() const;
     void prepareAsync();
@@ -240,7 +352,6 @@ public:
 
     // 向Java层发送事件的便捷方法
     bool postEventToJava(int what, int arg1 = 0, int arg2 = 0, void* obj = nullptr);
-    // 使用 MEDIA_EVENT_TYPE 枚举发送事件到Java层的便捷方法
     bool postMediaEventToJava(MEDIA_EVENT_TYPE eventType, int arg1 = 0, int arg2 = 0, void* obj = nullptr) {
         return postEventToJava(static_cast<int>(eventType), arg1, arg2, obj);
     }
@@ -257,18 +368,17 @@ public:
 
     AudioOutType audioOutType = AudioOutType::OPENSL_ES;
 
-    // 添加状态管理
     enum PlayerState {
         STATE_IDLE = 0,
-        STATE_INITIALIZED,// 1
-        STATE_ASYNC_PREPARING,//2
-        STATE_PREPARED,//3
-        STATE_STARTED,//4
-        STATE_PAUSED,//5
-        STATE_COMPLETED,//6
-        STATE_STOPPED,//7
-        STATE_ERROR,//8
-        STATE_END //9
+        STATE_INITIALIZED,
+        STATE_ASYNC_PREPARING,
+        STATE_PREPARED,
+        STATE_STARTED,
+        STATE_PAUSED,
+        STATE_COMPLETED,
+        STATE_STOPPED,
+        STATE_ERROR,
+        STATE_END
     };
 
 private:
@@ -276,26 +386,25 @@ private:
 
     SkyVideoOutHandler skyVideoOutHandler_;
     SkyAudioOutHandler skyAudioOutHandler_;
+    SkyDecoderHandler skyDecoderHandler_;
 
-    // 保存 java 层JxMediaPlayer对象，native->java 调用
     void *weakJavaPlayer;
-    // JNI方法管理器
     SkyMediaPlayerMethod methodManager_;
 
     PlayerState playerState = STATE_IDLE;
 
-    // 消息队列
     SkyMessageQueue messageQueue_;
-    // 消息处理回调
     void handleMessage(const SkyMessage& message);
 
-    // 添加设置播放器状态的方法
     void setPlayerState(PlayerState state);
-
-    // 将 PlayerState 转换为可读字符串
     const char* getPlayerStateString(PlayerState state);
 
-    // 添加销毁标志
+    // 渲染后端配置
+    RendererBackend rendererBackend_ = RendererBackend::OPENGL_ES;
+
+    // 解码模式配置
+    DecoderMode decoderMode_ = DecoderMode::AUTO;
+
     std::atomic<bool> isDestroyed_{false};
 };
 

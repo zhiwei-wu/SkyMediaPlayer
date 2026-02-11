@@ -37,7 +37,8 @@ class SkyPlayerControlView @JvmOverloads constructor(
     private lateinit var playPauseButton: TextView
     private lateinit var forwardButton: TextView
     private lateinit var subtitleButton: TextView
-    private lateinit var volumeButton: TextView
+    private lateinit var rotateButton: TextView
+    private lateinit var debugButton: TextView
 
     // 状态
     private var isPlaying = false
@@ -59,6 +60,8 @@ class SkyPlayerControlView @JvmOverloads constructor(
     // 回调接口
     private var playerControl: PlayerControl? = null
     private var onSubtitleButtonClickListener: OnClickListener? = null
+    private var onRotateButtonClickListener: OnClickListener? = null
+    private var onDebugButtonClickListener: OnClickListener? = null
 
     init {
         initView()
@@ -229,15 +232,27 @@ class SkyPlayerControlView @JvmOverloads constructor(
         }
         rightButtonGroup.addView(subtitleButton)
 
-        // 音量按钮
-        volumeButton = createTextButton("♪").apply {
+        // 横竖屏旋转按钮
+        rotateButton = createTextButton("↻").apply {
             setOnClickListener {
                 onUserInteraction()
-                Log.d(TAG, "Volume button clicked")
+                onRotateButtonClickListener?.onClick(this)
+                Log.d(TAG, "Rotate button clicked")
             }
-            contentDescription = "音量"
+            contentDescription = "旋转屏幕"
         }
-        rightButtonGroup.addView(volumeButton)
+        rightButtonGroup.addView(rotateButton)
+
+        // 调试信息按钮
+        debugButton = createTextButton("ℹ").apply {
+            setOnClickListener {
+                onUserInteraction()
+                onDebugButtonClickListener?.onClick(this)
+                Log.d(TAG, "Debug button clicked")
+            }
+            contentDescription = "调试信息"
+        }
+        rightButtonGroup.addView(debugButton)
 
         buttonLayout.addView(rightButtonGroup)
 
@@ -359,6 +374,20 @@ class SkyPlayerControlView @JvmOverloads constructor(
      */
     fun setOnSubtitleButtonClickListener(listener: OnClickListener?) {
         this.onSubtitleButtonClickListener = listener
+    }
+
+    /**
+     * 设置旋转按钮点击监听器
+     */
+    fun setOnRotateButtonClickListener(listener: OnClickListener?) {
+        this.onRotateButtonClickListener = listener
+    }
+
+    /**
+     * 设置调试信息按钮点击监听器
+     */
+    fun setOnDebugButtonClickListener(listener: OnClickListener?) {
+        this.onDebugButtonClickListener = listener
     }
 
     /**

@@ -1,6 +1,7 @@
 #include <cassert>
 #include "logger.h"
 #include "skyrenderer.h"
+#include "sky_vk_renderer.h"
 #include "sky_egl2_renderer_yuv420p.h"
 #include "sky_egl2_renderer_nv12.h"
 #include "sky_egl2_renderer_nv21.h"
@@ -486,6 +487,25 @@ EGLBoolean SkyEGL2RendererImp::renderImage(AVFrame *avFrame) {
 
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);      skyElg2CheckError("glDrawArrays");
     return GL_TRUE;
+}
+
+std::unique_ptr<SkyRenderer> SkyRenderer::create(RendererBackend backend) {
+    switch (backend) {
+        case RendererBackend::VULKAN:
+            ALOG_I("SkyRenderer", "========== RENDER BACKEND: Vulkan ==========");
+            return std::make_unique<SkyVkRenderer>();
+
+        case RendererBackend::METAL:
+            ALOG_W("SkyRenderer", "Metal backend not yet implemented, falling back to OpenGL ES");
+            ALOG_I("SkyRenderer", "========== RENDER BACKEND: OpenGL ES 2.0 (Metal fallback) ==========");
+            return std::make_unique<SkyEGL2Renderer>();
+
+        case RendererBackend::AUTO:
+        case RendererBackend::OPENGL_ES:
+        default:
+            ALOG_I("SkyRenderer", "========== RENDER BACKEND: OpenGL ES 2.0 ==========");
+            return std::make_unique<SkyEGL2Renderer>();
+    }
 }
 
 inline std::unique_ptr<SkyEGL2RendererImp> createRenderImpFactory(AVPixelFormat format) {

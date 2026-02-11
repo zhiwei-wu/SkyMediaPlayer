@@ -282,6 +282,10 @@ typedef struct VideoState {
      */
     void* skyPlayer;
 
+    // 硬件解码标志
+    int hw_decoder_active;          // 硬件解码器是否已激活（1=是，0=否）
+    int hw_surface_mode;            // 是否处于 Surface 直渲模式（1=是，0=否）
+
     // 独立刷新线程管理
     SDL_Thread *refresh_tid;        // 刷新线程句柄
     int refresh_thread_abort;       // 刷新线程退出标志

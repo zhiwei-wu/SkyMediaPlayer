@@ -35,6 +35,12 @@ class SkyVideoView(context: Context,
     // 播放器交互覆盖层（包含字幕和播控）
     private var _playerOverlay: SkyPlayerOverlay? = null
 
+    // 渲染后端配置
+    private var _rendererBackend: Int = 0  // 默认 OpenGL ES
+
+    // 解码模式配置
+    private var _decoderMode: Int = 3  // 默认 AUTO（自动三级回退）
+
     // Whisper 字幕状态
     private var _isWhisperEnabled: Boolean = false
     private var _whisperModelPath: String? = null
@@ -199,6 +205,24 @@ class SkyVideoView(context: Context,
         _playerOverlay?.hideControl()
     }
 
+    /**
+     * 设置渲染后端（必须在视频播放之前调用）
+     * @param backendValue 渲染后端值（0=OpenGL ES, 1=Vulkan, 2=Metal）
+     */
+    fun setRendererBackend(backendValue: Int) {
+        _rendererBackend = backendValue
+        Log.i(TAG, "setRendererBackend: $backendValue")
+    }
+
+    /**
+     * 设置解码模式（必须在视频播放之前调用）
+     * @param modeValue 解码模式值（0=硬解直渲, 1=硬解Buffer, 2=软解, 3=自动）
+     */
+    fun setDecoderMode(modeValue: Int) {
+        _decoderMode = modeValue
+        Log.i(TAG, "setDecoderMode: $modeValue")
+    }
+
     fun setVideoPath(path: String) {
         _localVideoPath = path
         _videoUri = null
@@ -253,6 +277,8 @@ class SkyVideoView(context: Context,
         releaseMediaPlayer()
 
         _mediaPlayer = SkyMediaPlayer()
+        (_mediaPlayer as? SkyMediaPlayer)?.setRendererBackend(_rendererBackend)
+        (_mediaPlayer as? SkyMediaPlayer)?.setDecoderMode(_decoderMode)
         _mediaPlayer!!.setOnPreparedListener(_preparedListener)
         _mediaPlayer!!.setOnCompletionListener(_onCompletionListener)
         _mediaPlayer!!.setOnBufferingUpdateListener(_onBufferingUpdateListener)
@@ -562,5 +588,38 @@ class SkyVideoView(context: Context,
      */
     fun getPlayerOverlay(): SkyPlayerOverlay? {
         return _playerOverlay
+    }
+
+    /**
+     * 设置旋转按钮点击监听器
+     */
+    fun setOnRotateButtonClickListener(listener: android.view.View.OnClickListener?) {
+        _playerOverlay?.setOnRotateButtonClickListener(listener)
+    }
+
+    /**
+     * 设置调试信息按钮点击监听器
+     */
+    fun setOnDebugButtonClickListener(listener: android.view.View.OnClickListener?) {
+        _playerOverlay?.setOnDebugButtonClickListener(listener)
+    }
+
+    /**
+     * 获取当前渲染后端值
+     */
+    fun getRendererBackend(): Int = _rendererBackend
+
+    /**
+     * 获取当前解码模式值
+     */
+    fun getDecoderMode(): Int = _decoderMode
+
+    /**
+     * 获取实际生效的解码模式（经过回退策略后的结果）
+     * 当用户选择"自动"时，返回实际使用的解码器类型
+     * @return 实际使用的解码模式值（0=硬解直渲, 1=硬解Buffer, 2=软解）
+     */
+    fun getActiveDecoderMode(): Int {
+        return (_mediaPlayer as? SkyMediaPlayer)?.getActiveDecoderMode() ?: _decoderMode
     }
 }

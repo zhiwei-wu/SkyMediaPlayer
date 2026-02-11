@@ -9,7 +9,14 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
+import android.graphics.Typeface
+import android.util.TypedValue
+import android.view.View
 import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -21,15 +28,20 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val PERMISSION_REQUEST_CODE = 1001
+        const val EXTRA_RENDERER_BACKEND = "renderer_backend"
+        const val EXTRA_DECODER_MODE = "decoder_mode"
     }
+
+    private lateinit var btnRenderSettings: Button
 
     private val videoPickerLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
-            // 启动SkyVideoActivity并传递视频URI
             val intent = Intent(this, SkyVideoActivity::class.java)
             intent.putExtra("video_uri", it.toString())
+            intent.putExtra(EXTRA_RENDERER_BACKEND, RendererPreferences.getRendererBackend(this))
+            intent.putExtra(EXTRA_DECODER_MODE, DecoderPreferences.getDecoderMode(this))
             startActivity(intent)
         } ?: run {
             Toast.makeText(this, "未选择视频文件", Toast.LENGTH_SHORT).show()
@@ -54,6 +66,13 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.main_activity_layout)
+
+        // 渲染设置（包含渲染后端 + 解码模式）
+        btnRenderSettings = findViewById(R.id.btn_render_settings)
+        updateRenderSettingsButtonText()
+        btnRenderSettings.setOnClickListener {
+            showRenderSettingsDialog()
+        }
 
         // 本地视频播放
         val btnPlayVideo = findViewById<Button>(R.id.btn_play_video)
@@ -104,12 +123,116 @@ class MainActivity : AppCompatActivity() {
      * @param videoUrl 视频URL
      */
     private fun playOnlineVideo(videoUrl: String) {
-        // 启动 SkyVideoActivity 并传递在线视频 URL
         val intent = Intent(this, SkyVideoActivity::class.java)
         intent.putExtra("video_url", videoUrl)
+        intent.putExtra(EXTRA_RENDERER_BACKEND, RendererPreferences.getRendererBackend(this))
+        intent.putExtra(EXTRA_DECODER_MODE, DecoderPreferences.getDecoderMode(this))
         startActivity(intent)
 
         Toast.makeText(this, "正在加载在线视频...", Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * 更新渲染设置按钮文字
+     */
+    private fun updateRenderSettingsButtonText() {
+        val backend = RendererPreferences.getBackendDisplayName(RendererPreferences.getRendererBackend(this))
+        val decoder = DecoderPreferences.getModeDisplayName(DecoderPreferences.getDecoderMode(this))
+
+        btnRenderSettings.text = "解码: $decoder\n渲染: $backend"
+    }
+
+    /**
+     * 显示渲染设置对话框（包含渲染后端和解码模式）
+     */
+    private fun showRenderSettingsDialog() {
+        val currentBackend = RendererPreferences.getRendererBackend(this)
+        val currentDecoder = DecoderPreferences.getDecoderMode(this)
+
+        val backends = arrayOf("OpenGL ES (默认)", "Vulkan", "Metal (暂不可用)")
+        val decoders = arrayOf("硬解直渲 (Surface)", "硬解Buffer", "软解 (FFmpeg)", "自动 (三级回退)")
+
+        var selectedBackend = currentBackend
+        var selectedDecoder = currentDecoder
+
+        val dialogView = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(48, 32, 48, 16)
+        }
+
+        // 渲染后端标题
+        dialogView.addView(TextView(this).apply {
+            text = "渲染后端"
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, 8)
+        })
+
+        // 渲染后端选项
+        val backendGroup = android.widget.RadioGroup(this).apply {
+            orientation = android.widget.RadioGroup.VERTICAL
+        }
+        backends.forEachIndexed { index, name ->
+            val radioButton = android.widget.RadioButton(this).apply {
+                text = name
+                id = index + 100
+                isChecked = index == currentBackend
+                isEnabled = index != 2 // Metal 暂不可用
+            }
+            backendGroup.addView(radioButton)
+        }
+        backendGroup.setOnCheckedChangeListener { _, checkedId ->
+            val index = checkedId - 100
+            if (index != 2) {
+                selectedBackend = index
+            }
+        }
+        dialogView.addView(backendGroup)
+
+        // 分隔线
+        dialogView.addView(View(this).apply {
+            layoutParams = android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 2
+            ).apply { topMargin = 24; bottomMargin = 24 }
+            setBackgroundColor(0xFFE0E0E0.toInt())
+        })
+
+        // 解码模式标题
+        dialogView.addView(TextView(this).apply {
+            text = "解码模式"
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, 8)
+        })
+
+        // 解码模式选项
+        val decoderGroup = android.widget.RadioGroup(this).apply {
+            orientation = android.widget.RadioGroup.VERTICAL
+        }
+        decoders.forEachIndexed { index, name ->
+            val radioButton = android.widget.RadioButton(this).apply {
+                text = name
+                id = index + 200
+                isChecked = index == currentDecoder
+            }
+            decoderGroup.addView(radioButton)
+        }
+        decoderGroup.setOnCheckedChangeListener { _, checkedId ->
+            selectedDecoder = checkedId - 200
+        }
+        dialogView.addView(decoderGroup)
+
+        AlertDialog.Builder(this)
+            .setTitle("渲染设置")
+            .setView(dialogView)
+            .setPositiveButton("确定") { _, _ ->
+                RendererPreferences.setRendererBackend(this, selectedBackend)
+                DecoderPreferences.setDecoderMode(this, selectedDecoder)
+                updateRenderSettingsButtonText()
+                Toast.makeText(this, "渲染设置已保存，下次播放生效", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     /**

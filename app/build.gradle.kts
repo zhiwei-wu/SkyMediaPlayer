@@ -42,6 +42,11 @@ android {
     }
 }
 
+// 读取依赖配置
+val skyDependencyMode: String by project
+val skyAarBuildType: String by project
+val skyAarVersion: String by project
+
 dependencies {
 
     implementation(libs.androidx.core.ktx)
@@ -50,7 +55,18 @@ dependencies {
     implementation(libs.androidx.games.activity)
     implementation(libs.androidx.activity)
     implementation(libs.androidx.constraintlayout)
-    implementation(project(":skymediaplayer"))
+
+    // SkyMediaPlayer 依赖：通过 gradle.properties 中的 SKY_DEPENDENCY_MODE 切换
+    // - "project": 项目源码依赖，用于开发调试
+    // - "aar":     JitPack AAR 依赖，用于集成使用
+    if (skyDependencyMode == "project") {
+        implementation(project(":skymediaplayer"))
+    } else {
+        // 通过 SKY_AAR_BUILD_TYPE 切换 release / debug 版本
+        val artifactId = if (skyAarBuildType == "debug") "skymediaplayer-debug" else "skymediaplayer"
+        implementation("com.github.zhiwei-wu.SkyMediaPlayer:$artifactId:$skyAarVersion")
+    }
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

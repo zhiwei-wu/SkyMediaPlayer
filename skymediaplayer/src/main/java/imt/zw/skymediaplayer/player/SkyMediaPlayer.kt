@@ -37,18 +37,26 @@ class SkyMediaPlayer() : IMediaPlayer {
 
         init {
             try {
-                // 按依赖顺序加载库：先加载依赖库，再加载主库
-                Log.d(TAG, "Loading SDL3 library...")
+                // 按依赖顺序加载库（被依赖的先加载）
+                // 1. C++ 标准库
+                System.loadLibrary("c++_shared")
+                Log.d(TAG, "c++_shared loaded")
+
+                // 2. OpenSSL（被 FFmpeg 依赖）
+                System.loadLibrary("skyssl")
+                Log.d(TAG, "skyssl loaded")
+
+                // 3. SDL3
                 System.loadLibrary("SDL3")
-                Log.d(TAG, "SDL3 library loaded successfully")
+                Log.d(TAG, "SDL3 loaded")
 
-                Log.d(TAG, "Loading skyffmpeg library...")
+                // 4. FFmpeg（whisper 已静态链接，动态链接 skyssl）
                 System.loadLibrary("skyffmpeg")
-                Log.d(TAG, "skyffmpeg library loaded successfully")
+                Log.d(TAG, "skyffmpeg loaded")
 
-                Log.d(TAG, "Loading skymediaplayer library...")
+                // 5. 主库（依赖以上所有）
                 System.loadLibrary("skymediaplayer")
-                Log.d(TAG, "skymediaplayer library loaded successfully")
+                Log.d(TAG, "skymediaplayer loaded")
 
                 Log.i(TAG, "All native libraries loaded successfully")
             } catch (e: UnsatisfiedLinkError) {

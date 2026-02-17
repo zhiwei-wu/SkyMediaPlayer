@@ -102,6 +102,59 @@ SkyPlayer 采用清晰的分层架构设计：
 - ✅ **网络流缓冲**：智能缓冲策略，流畅播放
 - ✅ **断点续播**：支持 Seek 到任意位置
 
+## 📦 集成依赖
+
+### 通过 JitPack 引入（推荐）
+
+**Step 1.** 在项目根目录的 `settings.gradle.kts` 中添加 JitPack 仓库：
+
+```kotlin
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+        maven { url = uri("https://jitpack.io") }  // 添加 JitPack
+    }
+}
+```
+
+**Step 2.** 在模块的 `build.gradle.kts` 中添加依赖：
+
+```kotlin
+dependencies {
+    // Release 版本（生产环境，so 已 strip）
+    implementation("com.github.zhiwei-wu:SkyPlayer:v1.0.0")
+
+    // 或 Debug 版本（开发调试，so 含完整调试符号）
+    // implementation("com.github.zhiwei-wu:SkyPlayer:v1.0.0")
+}
+```
+
+> 💡 将 `v1.0.0` 替换为 [最新版本号](https://jitpack.io/#zhiwei-wu/SkyPlayer)，或使用 `main-SNAPSHOT` 获取最新主分支构建。
+
+### 通过 Maven Local 引入（本地开发调试）
+
+```bash
+# 在 SkyPlayer 项目中执行，发布到本地 Maven 仓库
+./gradlew :skymediaplayer:publishReleasePublicationToMavenLocal -PVERSION_NAME=1.0.0
+```
+
+然后在你的项目中：
+
+```kotlin
+// settings.gradle.kts
+repositories {
+    mavenLocal()
+    // ...
+}
+
+// build.gradle.kts
+dependencies {
+    implementation("com.github.zhiwei-wu:skymediaplayer:1.0.0")
+}
+```
+
 ## 🚀 快速开始
 
 ### 本地视频播放

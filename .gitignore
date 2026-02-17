@@ -41,3 +41,7 @@ google-services.json
 
 # Aone Copilot
 .aone_copilot/
+
+# SkyPlayer 依赖库编译
+skymediaplayer/deps.config
+skymediaplayer/build_output/

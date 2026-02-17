@@ -5,18 +5,24 @@
 # Sets the minimum CMake version required for this project.
 cmake_minimum_required(VERSION 3.22.1)
 
-# Declares the project name. The project name can be accessed via ${ PROJECT_NAME},
-# Since this is the top level CMakeLists.txt, the project name is also accessible
-# with ${CMAKE_PROJECT_NAME} (both CMake variables are in-sync within the top level
-# build script scope).
+# Declares the project name.
 project("skymediaplayer")
 
 message("CMAKE_SOURCE_DIR 路径：${CMAKE_SOURCE_DIR}")
 
-# 设置预编译库目录
-set(PREBUILT_LIBS_DIR ${CMAKE_SOURCE_DIR}/../jniLibs/${ANDROID_ABI})
+# 根据 Gradle 传入的 SKY_BUILD_TYPE 选择预编译库目录
+# release 使用 jniLibs-release，debug 使用 jniLibs-debug
+if(SKY_BUILD_TYPE STREQUAL "debug")
+    set(PREBUILT_LIBS_DIR ${CMAKE_SOURCE_DIR}/../jniLibs-debug/${ANDROID_ABI})
+    message("使用 debug 预编译库: ${PREBUILT_LIBS_DIR}")
+else()
+    set(PREBUILT_LIBS_DIR ${CMAKE_SOURCE_DIR}/../jniLibs-release/${ANDROID_ABI})
+    message("使用 release 预编译库: ${PREBUILT_LIBS_DIR}")
+endif()
 
-# 添加 SDL3 动态库
+# ===== 预编译动态库 =====
+
+# SDL3
 include_directories(${CMAKE_SOURCE_DIR}/sdl/include)
 add_library(SDL3 SHARED IMPORTED)
 set_target_properties(SDL3 PROPERTIES
@@ -24,13 +30,23 @@ set_target_properties(SDL3 PROPERTIES
         IMPORTED_NO_SONAME ON
 )
 
-# 添加 FFmpeg 动态库
+# FFmpeg（子库静态合并为单一 so）
 add_library(skyffmpeg SHARED IMPORTED)
 set_target_properties(skyffmpeg PROPERTIES
         IMPORTED_LOCATION ${PREBUILT_LIBS_DIR}/libskyffmpeg.so
         IMPORTED_NO_SONAME ON
 )
 
+# OpenSSL（独立动态库）
+add_library(skyssl SHARED IMPORTED)
+set_target_properties(skyssl PROPERTIES
+        IMPORTED_LOCATION ${PREBUILT_LIBS_DIR}/libskyssl.so
+        IMPORTED_NO_SONAME ON
+)
+
+# whisper.cpp 已静态链接到 libskyffmpeg.so，不再需要独立动态库
+
+# ===== 头文件目录 =====
 include_directories(${CMAKE_SOURCE_DIR}/ffmpeg/include)
 include_directories(${CMAKE_SOURCE_DIR}/include)
 include_directories(${CMAKE_SOURCE_DIR}/ffplay)
@@ -38,21 +54,8 @@ include_directories(${CMAKE_SOURCE_DIR}/player)
 include_directories(${CMAKE_SOURCE_DIR}/player/renderer)
 include_directories(${CMAKE_SOURCE_DIR}/player/decoder)
 
-# Creates and names a library, sets it as either STATIC
-# or SHARED, and provides the relative paths to its source code.
-# You can define multiple libraries, and CMake builds them for you.
-# Gradle automatically packages shared libraries with your APK.
-#
-# In this top level CMakeLists.txt, ${CMAKE_PROJECT_NAME} is used to define
-# the target library name; in the sub-module's CMakeLists.txt, ${PROJECT_NAME}
-# is preferred for the same purpose.
-#
-# In order to load a library into your app from Java/Kotlin, you must call
-# System.loadLibrary() and pass the name of the library defined here;
-# for GameActivity/NativeActivity derived applications, the same library name must be
-# used in the AndroidManifest.xml file.
+# ===== 主库源文件 =====
 add_library(${CMAKE_PROJECT_NAME} SHARED
-        # List C/C++ source files with relative paths to this CMakeLists.txt.
         ffplay/ffplay.c
         ffplay/cmdutils.c
         ffplay/opt_common.c
@@ -70,14 +73,12 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         player/decoder/sky_mediacodec_decoder.cpp
         skymediaplayer_jni.cpp)
 
-# Specifies libraries CMake should link to your target library. You
-# can link libraries from various origins, such as libraries defined in this
-# build script, prebuilt third-party libraries, or Android system libraries.
+# ===== 链接库 =====
 target_link_libraries(${CMAKE_PROJECT_NAME}
-        # List libraries link to the target library
         PRIVATE
         SDL3
         skyffmpeg
+        skyssl
         android
         log
         OpenSLES

@@ -1,0 +1,22 @@
+# ===================================================================
+# SkyPlayer 依赖库编译配置
+#
+# 使用方法：
+#   1. 复制此文件为 deps.config: cp deps.config.template deps.config
+#   2. 修改下面的路径为本地实际路径
+#   3. 执行编译: ./build_deps.sh --install
+#
+# 注意：deps.config 已加入 .gitignore，不会提交到仓库
+# ===================================================================
+
+# ----- 源码目录（修改为本地实际路径）-----
+FFMPEG_SRC_DIR="/Users/uc/code/zhiwei-wu/FFmpeg"
+WHISPER_SRC_DIR="/Users/uc/code/zhiwei-wu/whisper.cpp"
+OPENSSL_SRC_DIR="/Users/uc/code/zhiwei-wu/openssl"
+
+# ----- Android NDK 配置 -----
+ANDROID_NDK_ROOT="$HOME/Library/Android/sdk/ndk/27.0.12077973"
+ANDROID_API=30
+ANDROID_ABI="arm64-v8a"
+ANDROID_ARCH="arm64"
+ANDROID_CPU="armv8-a"

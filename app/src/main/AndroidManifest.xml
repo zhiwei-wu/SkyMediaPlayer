@@ -32,6 +32,11 @@
         android:theme="@style/Theme.MyPlayer"
         tools:targetApi="31">
         <activity
+            android:name=".AutoTestActivity"
+            android:exported="false"
+            android:configChanges="orientation|keyboardHidden|screenSize"
+            android:theme="@style/Theme.MyPlayer.Fullscreen" />
+        <activity
             android:name=".SkyVideoActivity"
             android:exported="false"
             android:configChanges="orientation|keyboardHidden|screenSize"

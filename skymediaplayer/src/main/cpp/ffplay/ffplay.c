@@ -1350,7 +1350,17 @@ double get_current_position(VideoState *is)
 
     double pos = get_master_clock(is);
     if (isnan(pos) || pos < 0) {
-        return 0.0;
+        // Master clock 不可用（常见于 HLS 分片切换导致 serial 不匹配），
+        // 尝试使用音频/视频时钟的 pts 值作为备选
+        if (is->audio_st) {
+            pos = is->audclk.pts;
+        }
+        if ((isnan(pos) || pos < 0) && is->video_st) {
+            pos = is->vidclk.pts;
+        }
+        if (isnan(pos) || pos < 0) {
+            return 0.0;
+        }
     }
 
     return pos;
@@ -4075,6 +4085,24 @@ static int stream_component_open(VideoState *is, int stream_index)
             int decoder_mode = sky_get_decoder_mode(is->skyPlayer);
             is->hw_decoder_active = 0;
             is->hw_surface_mode = 0;
+
+            // HLS 流的分片切换会导致硬件解码器状态异常，强制使用软解
+            // 检测方式：URL 包含 .m3u8 或格式名包含 hls/applehttp
+            int is_hls = 0;
+            if (is->filename && strstr(is->filename, ".m3u8")) {
+                is_hls = 1;
+            } else if (ic->iformat && ic->iformat->name &&
+                       (strstr(ic->iformat->name, "hls") || strstr(ic->iformat->name, "applehttp"))) {
+                is_hls = 1;
+            }
+            if (is_hls && decoder_mode != SKY_DECODER_MODE_SOFTWARE) {
+                av_log(NULL, AV_LOG_INFO,
+                       "HLS stream detected (url=%s, format=%s), forcing software decoder for stability\n",
+                       is->filename ? is->filename : "null",
+                       ic->iformat && ic->iformat->name ? ic->iformat->name : "null");
+                ALOG_I(FFPLAY_TAG, "HLS stream detected, forcing software decoder (original mode=%d)", decoder_mode);
+                decoder_mode = SKY_DECODER_MODE_SOFTWARE;
+            }
 
             if (decoder_mode != SKY_DECODER_MODE_SOFTWARE) {
                 // 尝试硬件解码（sky_init_hw_decoder 内部实现三级回退）

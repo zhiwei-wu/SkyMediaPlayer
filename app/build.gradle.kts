@@ -3,6 +3,12 @@ plugins {
     alias(libs.plugins.kotlin.android)
 }
 
+// 读取依赖配置
+val skyDependencyMode: String by project
+val skyAarBuildType: String by project
+val skyAarVersion: String by project
+val skyAutoTestEnabled: String by project
+
 android {
     namespace = "imt.skymediaplayer.demo"
     compileSdk = 35
@@ -19,6 +25,9 @@ android {
         ndk {
             abiFilters.addAll(listOf("arm64-v8a"))
         }
+
+        // 自动化测试编译选项：通过 BuildConfig.AUTO_TEST_ENABLED 控制
+        buildConfigField("boolean", "AUTO_TEST_ENABLED", skyAutoTestEnabled)
     }
 
     buildTypes {
@@ -39,13 +48,9 @@ android {
     }
     buildFeatures {
         prefab = true
+        buildConfig = true
     }
 }
-
-// 读取依赖配置
-val skyDependencyMode: String by project
-val skyAarBuildType: String by project
-val skyAarVersion: String by project
 
 dependencies {
 

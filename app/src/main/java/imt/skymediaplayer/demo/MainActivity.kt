@@ -65,6 +65,17 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("MissingInflatedId")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // 自动化测试模式：编译选项控制，启用时直接跳转到测试页面
+        val skipAutoTest = intent.getBooleanExtra("skip_auto_test", false)
+        if (BuildConfig.AUTO_TEST_ENABLED && !skipAutoTest) {
+            val testIntent = Intent(this, AutoTestActivity::class.java)
+            testIntent.putExtra("auto_start", true)
+            startActivity(testIntent)
+            finish()
+            return
+        }
+
         setContentView(R.layout.main_activity_layout)
 
         // 渲染设置（包含渲染后端 + 解码模式）

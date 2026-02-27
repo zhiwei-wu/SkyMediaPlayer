@@ -60,73 +60,116 @@ HLS 流的特殊性在于起播慢（需下载 m3u8 索引 + 首个 TS 分片）
 
 ## 实战案例：HLS 视频画面卡住问题的自主修复
 
-这是一个完整的 AI 自主闭环修复案例，展示了从问题反馈到修复验证的全过程。
+这是一个完整的 AI 自主闭环修复案例。开发者只说了一句话，AI 就自主完成了 **4 轮"编译→安装→测试→日志分析→代码修改"的迭代闭环**，最终定位根因并修复问题。
 
-> 修复流程图见：[ai_auto_dev.drawio](ai_auto_dev.drawio)（第 2 页：HLS 问题修复流程）
+> 多轮排查流程图见：[ai_auto_dev.drawio](ai_auto_dev.drawio)（第 4 页：HLS 多轮自主排查）
 
 ![HLS 问题修复流程](HLS_playback_repair.png)
 
-### 问题描述
+### 触发：一句话驱动全自主修复
 
-用户反馈：
-> "HLS 播放的确有问题：画面卡住没有继续播放，但音频输出正常；如果进行 seek，只会播放一小段，然后画面又卡住不继续刷新渲染了。"
+开发者的完整输入只有这一段话：
 
-### AI 自主排查过程
+> "不对，HLS 这个播放的确是有问题的，问题就是我上面描述的：画面卡住没有继续播放，但音频输出正常；如果进行 seek，只会播放一小段，然后画面又卡住不继续刷新渲染了。
+> 请根据我的描述去排查问题，自行验证，直至问题修复。"
 
-#### 第一步：搜索代码库，定位相关模块
+从这一刻起，**开发者没有再做任何操作**。AI 接管了全部工作，开始了 4 轮自主排查迭代。
 
-AI 自动搜索了视频渲染、解码、音画同步相关的代码模块，锁定了 `ffplay.c` 中的视频刷新逻辑（`video_refresh`）和解码器初始化逻辑（`stream_component_open`）。
+### Agent Skill：AI 自主开发的技术基础
 
-#### 第二步：添加诊断日志
+AI 之所以能完全自主地完成这个修复任务，依赖于 **Agent Skill** 技术体系。Skill 是预先注册的结构化知识文档，让 AI 在面对特定开发场景时，能够自动加载对应的架构知识、代码目录、开发规范，而不需要开发者反复解释项目背景。
 
-AI 在关键路径上添加了诊断日志：
-- `pictq`（视频帧队列）的状态：是否为空、帧数量
-- `videoq`（视频包队列）的状态：包数量
-- 解码帧的 `pts` 值
-- 当前使用的解码模式
+本次修复过程中，AI 自动加载了 `develop-player` Skill，从中获取了：
 
-#### 第三步：编译 → 安装 → 自动测试
+| Skill 提供的知识 | 具体内容 |
+|-----------------|---------|
+| 播放器架构 | 四层架构（Java → JNI → Native → FFmpeg），理解问题应该在哪一层排查 |
+| 视频解码流程 | `stream_component_open` → `decoder_decode_frame` → `video_thread` 的调用链 |
+| 渲染流程 | `video_refresh` → `sky_video_image_display` 的帧显示逻辑 |
+| 音画同步机制 | master clock、frame_timer、delay 计算，理解"音频正常但画面卡住"意味着什么 |
+| 解码模式定义 | HW_SURFACE(0) / HW_BUFFER(1) / SOFTWARE(2) / AUTO(3) 四种模式 |
+| 代码目录 | 精确知道要修改 `ffplay.c` 而不是其他文件 |
+
+**没有 Skill，AI 需要大量搜索和试错来理解项目；有了 Skill，AI 直接切入核心逻辑。**
+
+### 第一轮：搜索代码库 + 添加诊断日志
+
+**目标**：理解"画面卡住但音频正常"的技术含义，在关键路径上添加诊断日志。
+
+AI 借助 Skill 中的架构知识，快速锁定了排查方向：
+- 音频正常 → 解封装、音频解码、音频输出链路没问题
+- 画面卡住 → 问题在视频解码或视频渲染环节
+
+AI 使用 `codebase_search` 和 `read_file` 工具搜索代码库，定位到 `ffplay.c` 中的 5 个关键位置，并添加了诊断日志：
+
+```c
+// 1. video_refresh: 帧队列是否为空
+"[VDISP] pictq EMPTY count=%d videoq.nb_packets=%d"
+
+// 2. sky_video_image_display: 渲染帧的 pts 值
+"[VDISP] rendered pts=%.3f rindex=%d size=%d"
+
+// 3. decoder_decode_frame: 解码返回值
+"[VDEC] avcodec_receive_frame ret=%d"
+
+// 4. decoder_decode_frame: serial 不匹配
+"[VDEC] serial mismatch queue_serial=%d pkt_serial=%d"
+
+// 5. video_thread: 无帧产出
+"[VDEC] get_video_frame returned 0 (no frame)"
+```
+
+然后执行第一轮自动化验证：
 
 ```bash
-# AI 自动执行
-./gradlew :app:installDebug
-adb shell am start -n imt.skymediaplayer.demo/.MainActivity
-# 等待自动测试完成
-adb logcat -s AutoTestActivity | grep -E "PASS|FAIL"
+./gradlew :app:installDebug          # 编译安装
+adb shell am start -n .../.MainActivity  # 启动应用（自动进入测试页面）
+sleep 50                              # 等待自动测试完成
+adb logcat -s AutoTestActivity        # 收集测试结果
 ```
 
-#### 第四步：收集日志，分析根因
+**第一轮结果**：HTTPS MP4 视频全部 PASSED，HLS 视频全部 FAILED。确认问题仅出现在 HLS 流上。
 
-AI 从 logcat 中发现了关键线索：
+### 第二轮：分析 HLS 日志，缩小范围
 
-**HW_SURFACE 模式（硬解直渲）：**
+**目标**：从 logcat 中提取 HLS 播放时的诊断日志，定位具体卡住的环节。
+
+AI 使用 `launch-process` 执行 `adb logcat` 并用 `grep` 过滤关键日志：
+
+```bash
+adb logcat -d -s SkyPlayer | grep -E "VDEC|VDISP|pictq|rendered" | head -50
 ```
-pictq EMPTY count=301 videoq.nb_packets=26
+
+发现了两种不同的失败模式：
+
+**HW_SURFACE 模式（硬解直渲）——解码线程卡死：**
 ```
-视频包队列有 26 个包，但帧队列始终为空——解码线程卡住了。
-
-**HW_BUFFER 模式（硬解 Buffer）：**
+[VDISP] pictq EMPTY count=301 videoq.nb_packets=26
 ```
-rendered pts=nan
+视频包队列有 26 个包等待解码，但帧队列始终为空。解码线程卡住了，没有帧产出。
+
+**HW_BUFFER 模式（硬解 Buffer）——时间戳丢失：**
 ```
-帧虽然入队了，但 pts 全是 NaN——时间戳丢失，音画同步失效。
+[VDISP] rendered pts=nan rindex=3 size=1
+```
+帧虽然入队了，但 `pts` 全是 NaN。时间戳丢失导致音画同步失效，`video_refresh` 中的 delay 计算异常。
 
-#### 第五步：定位根因
+**关键发现**：两种硬解模式都有问题，但软解模式正常。问题指向 **MediaCodec 硬件解码器**。
 
-**根因**：Android MediaCodec 硬件解码器与 HLS 流的分片切换机制不兼容。
+### 第三轮：定位根因 + 编写修复代码
 
-HLS 流的特点是由多个 TS 分片组成，播放过程中会频繁切换分片。每次切换时：
-- 编解码器参数可能发生变化
-- 时间戳基准可能重置
-- MediaCodec 的内部状态可能异常
+**目标**：确认根因是 MediaCodec 与 HLS 不兼容，编写修复代码。
 
-这导致了两种硬解模式都出现问题：
-- **HW_SURFACE**：MediaCodec 解码线程卡死，无法产出帧
-- **HW_BUFFER**：帧产出但时间戳信息丢失
+AI 分析了 HLS 流的技术特性：
+- HLS 由多个 TS 分片组成，播放过程中频繁切换分片
+- 每次切换时，编解码器参数可能变化、时间戳基准可能重置
+- MediaCodec 的内部状态在分片切换时可能异常
 
-#### 第六步：编写修复代码
+这解释了两种硬解模式的不同表现：
+- **HW_SURFACE**：MediaCodec 在分片切换后解码线程卡死，无法产出帧
+- **HW_BUFFER**：MediaCodec 产出帧但丢失了时间戳信息
 
-AI 在 `ffplay.c` 的 `stream_component_open` 函数中添加了 HLS 流检测和软解回退逻辑：
+**修复方案**：在 `stream_component_open` 中检测 HLS 流，强制使用 FFmpeg 软解：
 
 ```c
 // HLS 流检测：URL 包含 .m3u8 或格式名包含 hls/applehttp
@@ -145,25 +188,44 @@ if (is_hls && decoder_mode != SKY_DECODER_MODE_SOFTWARE) {
 }
 ```
 
-#### 第七步：编译 → 安装 → 自动验证
+### 第四轮：编译 → 安装 → 全量验证
 
-AI 再次执行编译安装，自动测试框架自动运行所有 17 个用例：
+**目标**：验证修复代码，确保 HLS 播放正常且不影响其他功能。
+
+AI 再次执行完整的编译安装和自动测试流程：
 
 ```
-Test result [PASSED]: 软解 + OpenGL ES + 在线HLS
-Test result [PASSED]: 软解 + Vulkan + 在线HLS
-Test result [PASSED]: 硬解直渲 + OpenGL ES + 在线HLS  (实际软解回退)
-Test result [PASSED]: 硬解直渲 + Vulkan + 在线HLS     (实际软解回退)
+Test result [PASSED]: 软解 + OpenGL ES + 在线HTTPS    ✅
+Test result [PASSED]: 软解 + OpenGL ES + 在线HLS      ✅
+Test result [PASSED]: 软解 + Vulkan + 在线HTTPS       ✅
+Test result [PASSED]: 软解 + Vulkan + 在线HLS         ✅
+Test result [PASSED]: 硬解直渲 + OpenGL ES + 在线HTTPS ✅
+Test result [PASSED]: 硬解直渲 + OpenGL ES + 在线HLS   ✅ (自动回退软解)
+Test result [PASSED]: 硬解直渲 + Vulkan + 在线HTTPS    ✅
+Test result [PASSED]: 硬解直渲 + Vulkan + 在线HLS      ✅ (自动回退软解)
 ...
+Test result [PASSED]: AI 字幕 (Whisper 英文识别)       ✅
 ```
 
-**全部 PASSED**，问题修复完成。
+**全部 17 个用例 PASSED**。HLS 播放恢复正常，HTTPS 视频不受影响，AI 字幕功能正常。
+
+### 4 轮迭代总览
+
+| 轮次 | AI 的动作 | 关键产出 |
+|------|----------|---------|
+| **第 1 轮** | 搜索代码库 → 添加 5 处诊断日志 → 编译安装 → 自动测试 | 确认问题仅出现在 HLS 流 |
+| **第 2 轮** | 收集 logcat 日志 → 分析两种硬解模式的失败表现 | 发现 HW_SURFACE 帧队列为空、HW_BUFFER pts 为 NaN |
+| **第 3 轮** | 定位根因（MediaCodec 与 HLS 不兼容）→ 编写修复代码 | HLS 检测 + 软解回退逻辑 |
+| **第 4 轮** | 编译安装 → 全量自动测试 → 17 个用例全部 PASSED | 问题修复完成 ✅ |
+
+**全程零人工干预**，从开发者说出"请根据我的描述去排查问题，自行验证，直至问题修复"到最终修复完成，AI 独立完成了 4 轮迭代。
 
 ### 关键数据
 
 | 指标 | 传统模式（估算） | AI 自主闭环 |
 |------|----------------|------------|
 | 人工介入次数 | 5~8 次 | **1 次**（仅提出问题） |
+| 自主迭代轮次 | — | **4 轮**（搜索→日志→修复→验证） |
 | 修复周期 | 2~4 小时 | **约 30 分钟** |
 | 验证覆盖度 | 手动测试 1~2 种配置 | **自动覆盖 17 种配置** |
 
@@ -225,9 +287,11 @@ AI 自主完成的工作包括：
 **关键代码路径**：
 - `skymediaplayer/src/main/cpp/ffplay/ffplay.c`（`stream_component_open` 函数）
 
-### AI Agent 的工具链
+### AI Agent 的工具链与 Skill 体系
 
-AI 通过以下工具链实现自主闭环：
+AI 自主闭环依赖两大技术支撑：**工具链**（执行能力）和 **Agent Skill**（领域知识）。
+
+#### 工具链：AI 的"手"和"眼睛"
 
 | 工具 | 用途 |
 |------|------|
@@ -236,6 +300,18 @@ AI 通过以下工具链实现自主闭环：
 | `file_replace` | 精确修改代码 |
 | `launch-process` | 执行 shell 命令（编译、安装、收集日志） |
 | `read-process` | 读取命令输出（logcat 日志分析） |
+
+#### Agent Skill：AI 的"领域专家大脑"
+
+Skill 是预先注册的结构化知识文档，让 AI 在面对特定开发场景时自动加载对应的架构知识和开发规范，无需开发者反复解释项目背景。
+
+| Skill | 提供的能力 |
+|-------|----------|
+| `develop-player` | 播放器架构、解码/渲染/同步流程、代码目录映射，让 AI 直接切入核心逻辑 |
+| `upgrade-ffmpeg` | FFmpeg 编译配置和升级流程，让 AI 自主完成底层库升级 |
+| `stage-commit` | 多仓库关联提交规范，让 AI 正确管理跨仓库的代码变更 |
+
+**Skill 的价值**：没有 Skill，AI 需要大量搜索和试错来理解项目；有了 Skill，AI 像一个熟悉项目的老员工一样，直接知道"问题在哪里、该改哪个文件、怎么改"。
 
 ## 总结
 

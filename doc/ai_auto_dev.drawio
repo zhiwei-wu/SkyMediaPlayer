@@ -304,4 +304,175 @@
       </root>
     </mxGraphModel>
   </diagram>
+
+  <diagram id="hls-multi-round" name="HLS 多轮自主排查">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- 标题 -->
+        <mxCell id="m_title" value="HLS 画面卡住问题：AI 4 轮自主排查修复流程" style="text;html=1;fontSize=22;fontStyle=1;align=center;fillColor=none;strokeColor=none;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="350" y="15" width="600" height="35" as="geometry"/>
+        </mxCell>
+
+        <!-- 触发：用户输入 -->
+        <mxCell id="m_trigger" value="👨‍💻 开发者输入（唯一一次人工操作）&#xa;「画面卡住没有继续播放，但音频输出正常；&#xa;seek 后只播一小段又卡住。&#xa;请根据描述去排查问题，自行验证，直至问题修复」" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="70" width="340" height="80" as="geometry"/>
+        </mxCell>
+
+        <!-- Agent Skill 加载 -->
+        <mxCell id="m_skill" value="📚 Agent Skill 自动加载&#xa;develop-player Skill&#xa;→ 播放器架构 / 解码流程&#xa;→ 渲染流程 / 音画同步&#xa;→ 代码目录定位" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8EAF6;strokeColor=#3F51B5;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="440" y="70" width="200" height="80" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="m_trigger_to_skill" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="m_trigger" target="m_skill" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- ========== 第 1 轮 ========== -->
+        <mxCell id="r1_bg" value="" style="rounded=1;fillColor=#E3F2FD;strokeColor=#1565C0;strokeWidth=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="190" width="400" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="r1_label" value="🔄 第 1 轮：搜索代码库 + 添加诊断日志" style="text;html=1;fontSize=13;fontStyle=1;align=left;fillColor=none;strokeColor=none;fontColor=#1565C0;" vertex="1" parent="1">
+          <mxGeometry x="55" y="195" width="370" height="22" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="r1_1" value="codebase_search&#xa;搜索视频渲染/解码模块" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1565C0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="55" y="225" width="150" height="45" as="geometry"/>
+        </mxCell>
+        <mxCell id="r1_2" value="file_replace&#xa;在 ffplay.c 5 个位置&#xa;添加诊断日志" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1565C0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="55" y="280" width="150" height="45" as="geometry"/>
+        </mxCell>
+        <mxCell id="r1_3" value="launch-process&#xa;./gradlew installDebug&#xa;adb shell am start" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1565C0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="225" y="225" width="150" height="45" as="geometry"/>
+        </mxCell>
+        <mxCell id="r1_4" value="📊 结果：HTTPS ✅&#xa;HLS ❌ 全部 FAILED" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFCDD2;strokeColor=#C62828;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="225" y="280" width="150" height="45" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="r1_a1" style="edgeStyle=orthogonalEdgeStyle;fontSize=9;" edge="1" source="r1_1" target="r1_2" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="r1_a2" style="edgeStyle=orthogonalEdgeStyle;fontSize=9;" edge="1" source="r1_2" target="r1_3" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="r1_a3" style="edgeStyle=orthogonalEdgeStyle;fontSize=9;" edge="1" source="r1_3" target="r1_4" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- Skill → 第 1 轮 -->
+        <mxCell id="m_skill_to_r1" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="m_skill" target="r1_bg" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- ========== 第 2 轮 ========== -->
+        <mxCell id="r2_bg" value="" style="rounded=1;fillColor=#FFF3E0;strokeColor=#E65100;strokeWidth=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="490" y="190" width="400" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="r2_label" value="🔄 第 2 轮：分析 HLS 日志，缩小范围" style="text;html=1;fontSize=13;fontStyle=1;align=left;fillColor=none;strokeColor=none;fontColor=#E65100;" vertex="1" parent="1">
+          <mxGeometry x="505" y="195" width="370" height="22" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="r2_1" value="launch-process&#xa;adb logcat | grep&#xa;VDEC|VDISP|pictq" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#E65100;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="505" y="225" width="150" height="45" as="geometry"/>
+        </mxCell>
+        <mxCell id="r2_2" value="🔍 发现 HW_SURFACE:&#xa;pictq EMPTY count=301&#xa;videoq.nb_packets=26" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#E65100;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="505" y="280" width="170" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="r2_3" value="🔍 发现 HW_BUFFER:&#xa;rendered pts=nan&#xa;时间戳全部丢失" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#E65100;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="695" y="280" width="170" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="r2_conclusion" value="💡 两种硬解都异常&#xa;软解正常 → 指向 MediaCodec" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF9C4;strokeColor=#F9A825;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="695" y="225" width="180" height="45" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="r2_a1" style="edgeStyle=orthogonalEdgeStyle;fontSize=9;" edge="1" source="r2_1" target="r2_2" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="r2_a2" style="edgeStyle=orthogonalEdgeStyle;fontSize=9;" edge="1" source="r2_1" target="r2_conclusion" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="r2_a3" style="edgeStyle=orthogonalEdgeStyle;fontSize=9;" edge="1" source="r2_conclusion" target="r2_3" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- 第 1 轮 → 第 2 轮 -->
+        <mxCell id="r1_to_r2" value="❌ HLS 失败" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#C62828;fontColor=#C62828;fontSize=10;" edge="1" source="r1_4" target="r2_1" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- ========== 第 3 轮 ========== -->
+        <mxCell id="r3_bg" value="" style="rounded=1;fillColor=#F3E5F5;strokeColor=#7B1FA2;strokeWidth=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="410" width="400" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="r3_label" value="🔄 第 3 轮：定位根因 + 编写修复代码" style="text;html=1;fontSize=13;fontStyle=1;align=left;fillColor=none;strokeColor=none;fontColor=#7B1FA2;" vertex="1" parent="1">
+          <mxGeometry x="55" y="415" width="370" height="22" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="r3_1" value="🧠 根因分析&#xa;MediaCodec 与 HLS&#xa;分片切换不兼容" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#7B1FA2;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="55" y="445" width="150" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="r3_2" value="file_replace&#xa;stream_component_open&#xa;添加 HLS 检测逻辑" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#7B1FA2;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="55" y="510" width="150" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="r3_3" value="检测 .m3u8 URL&#xa;或 hls/applehttp 格式&#xa;→ 强制 SOFTWARE 模式" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#7B1FA2;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="225" y="445" width="180" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="r3_4" value="对用户透明&#xa;上层仍可设置任意模式&#xa;底层自动回退" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#7B1FA2;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="225" y="510" width="180" height="50" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="r3_a1" style="edgeStyle=orthogonalEdgeStyle;fontSize=9;" edge="1" source="r3_1" target="r3_2" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="r3_a2" style="edgeStyle=orthogonalEdgeStyle;fontSize=9;" edge="1" source="r3_1" target="r3_3" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="r3_a3" style="edgeStyle=orthogonalEdgeStyle;fontSize=9;" edge="1" source="r3_3" target="r3_4" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- 第 2 轮 → 第 3 轮 -->
+        <mxCell id="r2_to_r3" value="分析完成" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#E65100;fontColor=#E65100;fontSize=10;" edge="1" source="r2_2" target="r3_1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="480" y="380"/>
+              <mxPoint x="480" y="380"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ========== 第 4 轮 ========== -->
+        <mxCell id="r4_bg" value="" style="rounded=1;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="490" y="410" width="400" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="r4_label" value="🔄 第 4 轮：编译 → 安装 → 全量验证" style="text;html=1;fontSize=13;fontStyle=1;align=left;fillColor=none;strokeColor=none;fontColor=#2E7D32;" vertex="1" parent="1">
+          <mxGeometry x="505" y="415" width="370" height="22" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="r4_1" value="launch-process&#xa;./gradlew installDebug" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#2E7D32;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="505" y="445" width="150" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="r4_2" value="launch-process&#xa;adb shell am start&#xa;AutoTestActivity 自动运行" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#2E7D32;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="505" y="495" width="150" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="r4_3" value="read-process&#xa;adb logcat 收集结果" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#2E7D32;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="680" y="445" width="150" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="r4_4" value="✅ 全部 17 用例 PASSED&#xa;HLS ✅ HTTPS ✅ AI字幕 ✅" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#A5D6A7;strokeColor=#2E7D32;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="680" y="495" width="190" height="50" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="r4_a1" style="edgeStyle=orthogonalEdgeStyle;fontSize=9;" edge="1" source="r4_1" target="r4_2" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="r4_a2" style="edgeStyle=orthogonalEdgeStyle;fontSize=9;" edge="1" source="r4_1" target="r4_3" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="r4_a3" style="edgeStyle=orthogonalEdgeStyle;fontSize=9;" edge="1" source="r4_3" target="r4_4" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- 第 3 轮 → 第 4 轮 -->
+        <mxCell id="r3_to_r4" value="代码修复完成" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#7B1FA2;fontColor=#7B1FA2;fontSize=10;" edge="1" source="r3_4" target="r4_1" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- ========== 底部总结 ========== -->
+        <mxCell id="m_summary_bg" value="" style="rounded=1;fillColor=#F5F5F5;strokeColor=#616161;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="630" width="850" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="m_summary_title" value="📊 4 轮迭代总结" style="text;html=1;fontSize=14;fontStyle=1;align=left;fillColor=none;strokeColor=none;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="55" y="635" width="200" height="22" as="geometry"/>
+        </mxCell>
+        <mxCell id="m_s1" value="第 1 轮: 搜索 + 加日志 + 编译测试 → 确认 HLS 独有问题" style="text;html=1;fontSize=11;align=left;fillColor=none;strokeColor=none;fontColor=#1565C0;" vertex="1" parent="1">
+          <mxGeometry x="55" y="660" width="400" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="m_s2" value="第 2 轮: 分析 logcat → HW_SURFACE 帧队列空 / HW_BUFFER pts=NaN" style="text;html=1;fontSize=11;align=left;fillColor=none;strokeColor=none;fontColor=#E65100;" vertex="1" parent="1">
+          <mxGeometry x="55" y="680" width="420" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="m_s3" value="第 3 轮: 定位根因 MediaCodec 不兼容 → 编写 HLS 软解回退" style="text;html=1;fontSize=11;align=left;fillColor=none;strokeColor=none;fontColor=#7B1FA2;" vertex="1" parent="1">
+          <mxGeometry x="480" y="660" width="400" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="m_s4" value="第 4 轮: 编译 + 全量测试 → 17 用例全部 PASSED ✅" style="text;html=1;fontSize=11;align=left;fillColor=none;strokeColor=none;fontColor=#2E7D32;" vertex="1" parent="1">
+          <mxGeometry x="480" y="680" width="400" height="18" as="geometry"/>
+        </mxCell>
+
+        <!-- 关键标注 -->
+        <mxCell id="m_highlight" value="💡 全程零人工干预 | 4 轮自主迭代 | Agent Skill 驱动" style="text;html=1;fontSize=13;fontStyle=3;align=center;fillColor=#d5e8d4;strokeColor=#82b366;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="200" y="730" width="500" height="30" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
 </mxfile>

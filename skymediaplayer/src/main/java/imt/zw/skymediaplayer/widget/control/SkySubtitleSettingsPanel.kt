@@ -1,8 +1,5 @@
 package imt.zw.skymediaplayer.widget.control
 
-import android.animation.Animator
-import android.animation.AnimatorListenerAdapter
-import android.animation.ObjectAnimator
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -11,10 +8,8 @@ import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
-import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
@@ -27,16 +22,13 @@ class SkySubtitleSettingsPanel @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0
-) : FrameLayout(context, attrs, defStyleAttr) {
+) : SkySlidePanel(context, attrs, defStyleAttr) {
 
     companion object {
         private const val TAG = "SkySubtitleSettingsPanel"
-        private const val ANIMATION_DURATION_MS = 300L
     }
 
     // UI 组件
-    private lateinit var dimBackground: View
-    private lateinit var panelContainer: LinearLayout
     private lateinit var enableSwitch: Switch
     private lateinit var cpuButton: TextView
     private lateinit var gpuButton: TextView
@@ -50,103 +42,20 @@ class SkySubtitleSettingsPanel @JvmOverloads constructor(
 
     // 回调
     private var onSettingsChangeListener: OnSubtitleSettingsChangeListener? = null
-    private var onDismissListener: (() -> Unit)? = null
 
     init {
-        initView()
-        visibility = GONE
-    }
-
-    private fun initView() {
-        // 设置全屏覆盖
-        layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
-
-        // 半透明背景遮罩
-        dimBackground = View(context).apply {
-            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
-            setBackgroundColor(0x80000000.toInt())
-            setOnClickListener { dismiss() }
-        }
-        addView(dimBackground)
-
-        // 底部面板容器（横屏时限制最大高度为屏幕高度的 80%）
-        val scrollView = ScrollView(context).apply {
-            layoutParams = LayoutParams(
-                LayoutParams.MATCH_PARENT,
-                LayoutParams.WRAP_CONTENT
-            ).apply {
-                gravity = Gravity.BOTTOM
-            }
-            isVerticalScrollBarEnabled = true
-        }
-
-        scrollView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            val currentHeight = scrollView.height
-            val screenHeight = context.resources.displayMetrics.heightPixels
-            val maxAllowedHeight = (screenHeight * 0.8).toInt()
-            if (currentHeight > maxAllowedHeight) {
-                scrollView.layoutParams = scrollView.layoutParams.apply {
-                    height = maxAllowedHeight
-                }
-            }
-        }
-
-        panelContainer = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            
-            // 圆角背景
-            background = GradientDrawable().apply {
-                setColor(0xF5222222.toInt())
-                cornerRadii = floatArrayOf(
-                    dpToPx(16f), dpToPx(16f),
-                    dpToPx(16f), dpToPx(16f),
-                    0f, 0f,
-                    0f, 0f
-                )
-            }
-            
-            setPadding(dpToPx(20), dpToPx(16), dpToPx(20), dpToPx(24))
-        }
-
-        // 标题栏
+        // 向基类内容容器 panelContainer 填充各分区；弹出/方向/滚动/动画由 SkySlidePanel 规范负责
         addTitleBar()
-
-        // 分隔线
         addDivider()
-
-        // 启用开关
         addEnableSwitch()
-
-        // 分隔线
         addDivider()
-
-        // 推理设备选择
         addInferenceDeviceSection()
-
-        // 分隔线
         addDivider()
-
-        // 翻译语言选择
         addLanguageSection()
-
-        // 分隔线
         addDivider()
-
-        // 处理间隔设置
         addProcessingIntervalSection()
-
-        // 分隔线
         addDivider()
-
-        // 调试模式开关
         addDebugModeSection()
-
-        scrollView.addView(panelContainer)
-        addView(scrollView)
     }
 
     /**
@@ -602,85 +511,9 @@ class SkySubtitleSettingsPanel @JvmOverloads constructor(
         }
     }
 
-    /**
-     * dp 转 px (Int)
-     */
-    private fun dpToPx(dp: Int): Int {
-        return TypedValue.applyDimension(
-            TypedValue.COMPLEX_UNIT_DIP,
-            dp.toFloat(),
-            context.resources.displayMetrics
-        ).toInt()
-    }
-
-    /**
-     * dp 转 px (Float)
-     */
-    private fun dpToPx(dp: Float): Float {
-        return TypedValue.applyDimension(
-            TypedValue.COMPLEX_UNIT_DIP,
-            dp,
-            context.resources.displayMetrics
-        )
-    }
-
     // ============================================================================
     // 公共方法
     // ============================================================================
-
-    /**
-     * 显示设置面板
-     */
-    fun show() {
-        if (visibility == VISIBLE) return
-
-        visibility = VISIBLE
-
-        // 背景淡入动画
-        dimBackground.alpha = 0f
-        ObjectAnimator.ofFloat(dimBackground, "alpha", 0f, 1f).apply {
-            duration = ANIMATION_DURATION_MS
-            start()
-        }
-
-        // 面板滑入动画
-        panelContainer.translationY = panelContainer.height.toFloat()
-        panelContainer.post {
-            ObjectAnimator.ofFloat(panelContainer, "translationY", panelContainer.height.toFloat(), 0f).apply {
-                duration = ANIMATION_DURATION_MS
-                start()
-            }
-        }
-
-        Log.d(TAG, "Panel shown")
-    }
-
-    /**
-     * 隐藏设置面板
-     */
-    fun dismiss() {
-        if (visibility != VISIBLE) return
-
-        // 背景淡出动画
-        ObjectAnimator.ofFloat(dimBackground, "alpha", 1f, 0f).apply {
-            duration = ANIMATION_DURATION_MS
-            start()
-        }
-
-        // 面板滑出动画
-        ObjectAnimator.ofFloat(panelContainer, "translationY", 0f, panelContainer.height.toFloat()).apply {
-            duration = ANIMATION_DURATION_MS
-            addListener(object : AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: Animator) {
-                    visibility = GONE
-                    onDismissListener?.invoke()
-                }
-            })
-            start()
-        }
-
-        Log.d(TAG, "Panel dismissed")
-    }
 
     /**
      * 设置当前设置值
@@ -708,18 +541,6 @@ class SkySubtitleSettingsPanel @JvmOverloads constructor(
     fun setOnSettingsChangeListener(listener: OnSubtitleSettingsChangeListener?) {
         this.onSettingsChangeListener = listener
     }
-
-    /**
-     * 设置关闭监听器
-     */
-    fun setOnDismissListener(listener: () -> Unit) {
-        this.onDismissListener = listener
-    }
-
-    /**
-     * 面板是否正在显示
-     */
-    fun isShowing(): Boolean = visibility == VISIBLE
 }
 
 /**

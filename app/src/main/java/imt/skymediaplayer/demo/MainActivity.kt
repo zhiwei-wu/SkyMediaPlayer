@@ -23,6 +23,9 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 
 class MainActivity : AppCompatActivity() {
 
@@ -45,6 +48,26 @@ class MainActivity : AppCompatActivity() {
             startActivity(intent)
         } ?: run {
             Toast.makeText(this, "未选择视频文件", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // 选择画质滤镜文件（512x512 PNG），拷贝到 app 私有目录并持久化路径
+    private val lutPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri == null) {
+            Toast.makeText(this, "未选择滤镜文件", Toast.LENGTH_SHORT).show()
+            return@registerForActivityResult
+        }
+        try {
+            val dst = java.io.File(filesDir, "lut_default.png")
+            contentResolver.openInputStream(uri)?.use { input ->
+                dst.outputStream().use { output -> input.copyTo(output) }
+            }
+            FilterPreferences.setFilterFilePath(this, dst.absolutePath)
+            Toast.makeText(this, "已设置滤镜文件，播放器选「默认」即可应用", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "保存滤镜文件失败：${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -77,6 +100,20 @@ class MainActivity : AppCompatActivity() {
         }
 
         setContentView(R.layout.main_activity_layout)
+
+        // 适配 Android 15+/16 边到边强制：给根视图加系统栏内边距，避免内容被状态栏/导航栏遮挡
+        val rootView = findViewById<View>(R.id.main_root)
+        val basePadding = rootView.paddingTop
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.updatePadding(
+                left = bars.left,
+                top = basePadding + bars.top,
+                right = bars.right,
+                bottom = basePadding + bars.bottom
+            )
+            insets
+        }
 
         // 渲染设置（包含渲染后端 + 解码模式）
         btnRenderSettings = findViewById(R.id.btn_render_settings)
@@ -232,6 +269,36 @@ class MainActivity : AppCompatActivity() {
             selectedDecoder = checkedId - 200
         }
         dialogView.addView(decoderGroup)
+
+        // 分隔线
+        dialogView.addView(View(this).apply {
+            layoutParams = android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 2
+            ).apply { topMargin = 24; bottomMargin = 24 }
+            setBackgroundColor(0xFFE0E0E0.toInt())
+        })
+
+        // 画质滤镜文件标题
+        dialogView.addView(TextView(this).apply {
+            text = "画质滤镜文件"
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, 8)
+        })
+
+        // 当前滤镜文件状态
+        val currentLutPath = FilterPreferences.getFilterFilePath(this)
+        dialogView.addView(TextView(this).apply {
+            text = if (currentLutPath.isNullOrEmpty()) "未设置（播放器「默认」项不可用）" else "已设置：${java.io.File(currentLutPath).name}"
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13f)
+            setPadding(0, 0, 0, 8)
+        })
+
+        // 选择滤镜文件按钮（512x512 PNG）
+        dialogView.addView(Button(this).apply {
+            text = "选择滤镜文件 (512x512 PNG)"
+            setOnClickListener { lutPickerLauncher.launch("image/*") }
+        })
 
         AlertDialog.Builder(this)
             .setTitle("渲染设置")

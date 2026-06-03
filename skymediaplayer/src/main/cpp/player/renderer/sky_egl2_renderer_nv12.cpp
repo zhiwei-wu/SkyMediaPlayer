@@ -137,5 +137,6 @@ void SkyEGL2RendererNV12Imp::reset() {
             nv12_textures[i] = 0;
         }
     }
+    releaseLutTexture();
     avPixFormat = AV_PIX_FMT_NONE;
 }

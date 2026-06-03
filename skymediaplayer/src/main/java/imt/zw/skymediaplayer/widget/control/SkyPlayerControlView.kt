@@ -37,6 +37,7 @@ class SkyPlayerControlView @JvmOverloads constructor(
     private lateinit var playPauseButton: TextView
     private lateinit var forwardButton: TextView
     private lateinit var subtitleButton: TextView
+    private lateinit var filterButton: TextView
     private lateinit var rotateButton: TextView
     private lateinit var debugButton: TextView
 
@@ -60,6 +61,7 @@ class SkyPlayerControlView @JvmOverloads constructor(
     // 回调接口
     private var playerControl: PlayerControl? = null
     private var onSubtitleButtonClickListener: OnClickListener? = null
+    private var onFilterButtonClickListener: OnClickListener? = null
     private var onRotateButtonClickListener: OnClickListener? = null
     private var onDebugButtonClickListener: OnClickListener? = null
 
@@ -232,6 +234,21 @@ class SkyPlayerControlView @JvmOverloads constructor(
         }
         rightButtonGroup.addView(subtitleButton)
 
+        // 画质入口按钮（文字「画质」）
+        filterButton = createTextButton("画质").apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            // 文字按钮用自适应宽度 + 左右内边距，避免两个汉字被裁切
+            layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, dpToPx(48))
+            setPadding(dpToPx(8), 0, dpToPx(8), 0)
+            setOnClickListener {
+                onUserInteraction()
+                onFilterButtonClickListener?.onClick(this)
+                Log.d(TAG, "Filter button clicked")
+            }
+            contentDescription = "画质"
+        }
+        rightButtonGroup.addView(filterButton)
+
         // 横竖屏旋转按钮
         rotateButton = createTextButton("↻").apply {
             setOnClickListener {
@@ -374,6 +391,13 @@ class SkyPlayerControlView @JvmOverloads constructor(
      */
     fun setOnSubtitleButtonClickListener(listener: OnClickListener?) {
         this.onSubtitleButtonClickListener = listener
+    }
+
+    /**
+     * 设置画质滤镜按钮点击监听器
+     */
+    fun setOnFilterButtonClickListener(listener: OnClickListener?) {
+        this.onFilterButtonClickListener = listener
     }
 
     /**

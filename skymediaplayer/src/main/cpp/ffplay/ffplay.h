@@ -374,6 +374,12 @@ int64_t get_media_duration(VideoState *is);
  */
 int set_audio_filters(VideoState *is, const char *filters);
 
+/**
+ * 请求重绘最后一帧（暂停时也生效）。
+ * 运行时改了渲染参数（如 LUT）后调用，立即按新参数把当前画面重绘一次。
+ */
+void sky_request_video_redraw(VideoState *is);
+
 #ifdef __cplusplus
 };
 #endif

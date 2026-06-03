@@ -5162,3 +5162,25 @@ int set_audio_filters(VideoState *is, const char *filters)
 
     return 0;
 }
+
+/**
+ * 请求重绘最后一帧（暂停时也生效）
+ * 用于运行时修改渲染参数（如 LUT 滤镜）后，立即把当前画面按新参数重绘一次。
+ * 原理：
+ *   1) 把最后一帧的 uploaded 置 0 —— 否则 sky_video_image_display 里的
+ *      `if (!vp->uploaded)` 守卫会跳过渲染，force_refresh 形同无效；
+ *   2) 置 force_refresh —— refresh_thread 暂停时也会据此调用 video_refresh 重绘最后一帧。
+ */
+void sky_request_video_redraw(VideoState *is)
+{
+    if (!is) {
+        return;
+    }
+    if (is->pictq.rindex_shown) {
+        Frame *vp = frame_queue_peek_last(&is->pictq);
+        if (vp) {
+            vp->uploaded = 0;
+        }
+    }
+    is->force_refresh = 1;
+}

@@ -337,6 +337,31 @@ jint sky_mediaPlayer_setAudioFilter(JNIEnv *env, jobject thiz, jstring filter) {
     return result;
 }
 
+jint sky_mediaPlayer_setLut(JNIEnv *env, jobject thiz, jbyteArray rgba, jfloat intensity) {
+    auto* player = asSkyPlayer(env, thiz);
+    if (nullptr == player) {
+        ALOG_E(TAG, "setLut: player is null");
+        return -1;
+    }
+
+    if (rgba == nullptr) {
+        return player->setLut(nullptr, 0, intensity);
+    }
+
+    jsize len = env->GetArrayLength(rgba);
+    jbyte* buf = env->GetByteArrayElements(rgba, nullptr);
+    if (buf == nullptr) {
+        ALOG_E(TAG, "setLut: GetByteArrayElements failed");
+        return -1;
+    }
+
+    int result = player->setLut(reinterpret_cast<const uint8_t*>(buf),
+                                static_cast<int>(len), intensity);
+
+    env->ReleaseByteArrayElements(rgba, buf, JNI_ABORT);
+    return result;
+}
+
 void sky_mediaPlayer_setRendererBackend(JNIEnv *env, jobject thiz, jint backend) {
     auto* player = asSkyPlayer(env, thiz);
     if (nullptr == player) {
@@ -392,6 +417,7 @@ static JNINativeMethod methods[] = {
         {"_isPlaying", "()Z", (void *) sky_mediaPlayer_isPlaying},
         {"_release", "()V", (void *) sky_mediaPlayer_release},
         {"_setAudioFilter", "(Ljava/lang/String;)I", (void *) sky_mediaPlayer_setAudioFilter},
+        {"_setLut", "([BF)I", (void *) sky_mediaPlayer_setLut},
         {"_setWhisperPrebufferMode", "(Z)Z", (void *) sky_mediaPlayer_setWhisperPrebufferMode},
         {"_setRendererBackend", "(I)V", (void *) sky_mediaPlayer_setRendererBackend},
         {"_setDecoderMode", "(I)V", (void *) sky_mediaPlayer_setDecoderMode},

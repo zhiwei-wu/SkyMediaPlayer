@@ -305,6 +305,8 @@ class SkyMediaPlayer() : IMediaPlayer {
     @Keep
     private external fun _setAudioFilter(filter: String?): Int
     @Keep
+    private external fun _setLut(rgba: ByteArray?, intensity: Float): Int
+    @Keep
     private external fun _setWhisperPrebufferMode(enabled: Boolean): Boolean
     @Keep
     private external fun _setRendererBackend(backend: Int)
@@ -652,6 +654,17 @@ class SkyMediaPlayer() : IMediaPlayer {
     fun setAudioFilter(filter: String?): Int {
         Log.i(TAG, "setAudioFilter: ${filter ?: "(none)"}")
         return _setAudioFilter(filter)
+    }
+
+    /**
+     * 设置 LUT 画质滤镜（GPU 渲染）
+     * @param rgba 512x512 的 RGBA 字节数组（512*512*4）；传 null 关闭滤镜
+     * @param intensity 强度 0..1，默认 1.0
+     * @return 0 成功，负值失败
+     */
+    fun setLut(rgba: ByteArray?, intensity: Float = 1.0f): Int {
+        Log.i(TAG, "setLut: ${if (rgba == null) "(none)" else "${rgba.size} bytes, intensity=$intensity"}")
+        return _setLut(rgba, intensity)
     }
 
     /**

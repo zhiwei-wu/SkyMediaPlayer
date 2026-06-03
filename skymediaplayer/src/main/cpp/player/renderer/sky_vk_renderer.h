@@ -10,6 +10,8 @@
 #include <vulkan/vulkan_android.h>
 #include <memory>
 #include <vector>
+#include <mutex>
+#include <cstdint>
 #include <unordered_map>
 
 class SkyVkRenderer : public SkyRenderer {
@@ -21,6 +23,9 @@ public:
     bool displayImage(EGLNativeWindowType window, AVFrame *frame) override;
     bool isValid() override;
     void terminate() override;
+
+    void setLut(const uint8_t* rgba, int len, float intensity) override;
+    void clearLut() override;
 
 private:
     // Vulkan 核心对象
@@ -79,6 +84,16 @@ private:
     
     // descriptor sets 更新标记
     bool descriptorSetsNeedUpdate_ = false;
+
+    // LUT（GPUImage 512x512 lookup）—— 常驻纹理绑 binding=3，开关/强度走 push constant
+    static constexpr int LUT_BINDING = 3;
+    TextureImage lutTexture_;
+    std::mutex   lutMtx_;
+    std::vector<uint8_t> lutPending_;   // 512*512*4，待上传
+    bool  lutPendingDirty_ = false;
+    bool  lutEnabled_ = false;
+    float lutIntensity_ = 1.0f;
+    float lutPushValue_ = 0.0f;         // = enabled ? intensity : 0，每帧推送
     
     // 状态追踪
     EGLNativeWindowType currentWindow_ = nullptr;
@@ -121,7 +136,8 @@ private:
                           VkDeviceSize size, uint32_t width, uint32_t height,
                           uint32_t rowPitch, VkFormat format);
     bool createVertexBuffer();
-    
+    bool ensureLutTexture();   // 创建常驻 512x512 LUT 纹理（首次）
+
     // 渲染相关
     void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
     bool recreateSwapchain();

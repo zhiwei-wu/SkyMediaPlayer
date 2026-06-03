@@ -12,6 +12,8 @@ public:
             uniform   lowp  sampler2D us2_SamplerX;
             uniform   lowp  sampler2D us2_SamplerY;
             uniform   lowp  sampler2D us2_SamplerZ;
+            uniform         sampler2D us2_SamplerLUT;  // 512x512 GPUImage lookup
+            uniform         float     u_LutEnabled;    // 0.0=off, else intensity
 
             void main()
             {
@@ -22,7 +24,26 @@ public:
                 yuv.y = (texture2D(us2_SamplerY, vv2_Texcoord).r - 0.5);
                 yuv.z = (texture2D(us2_SamplerZ, vv2_Texcoord).r - 0.5);
                 rgb = um3_ColorConversion * yuv;
-                gl_FragColor = vec4(rgb, 1);
+
+                if (u_LutEnabled > 0.001) {
+                    highp float blueColor = clamp(rgb.b, 0.0, 1.0) * 63.0;
+                    highp vec2 quad1;
+                    quad1.y = floor(floor(blueColor) / 8.0);
+                    quad1.x = floor(blueColor) - (quad1.y * 8.0);
+                    highp vec2 quad2;
+                    quad2.y = floor(ceil(blueColor) / 8.0);
+                    quad2.x = ceil(blueColor) - (quad2.y * 8.0);
+                    highp vec2 t1;
+                    t1.x = (quad1.x * 0.125) + 0.5/512.0 + ((0.125 - 1.0/512.0) * clamp(rgb.r, 0.0, 1.0));
+                    t1.y = (quad1.y * 0.125) + 0.5/512.0 + ((0.125 - 1.0/512.0) * clamp(rgb.g, 0.0, 1.0));
+                    highp vec2 t2;
+                    t2.x = (quad2.x * 0.125) + 0.5/512.0 + ((0.125 - 1.0/512.0) * clamp(rgb.r, 0.0, 1.0));
+                    t2.y = (quad2.y * 0.125) + 0.5/512.0 + ((0.125 - 1.0/512.0) * clamp(rgb.g, 0.0, 1.0));
+                    lowp vec3 nc = mix(texture2D(us2_SamplerLUT, t1).rgb,
+                                       texture2D(us2_SamplerLUT, t2).rgb, fract(blueColor));
+                    rgb = mix(rgb, nc, u_LutEnabled);
+                }
+                gl_FragColor = vec4(rgb, 1.0);
             }
     );
 

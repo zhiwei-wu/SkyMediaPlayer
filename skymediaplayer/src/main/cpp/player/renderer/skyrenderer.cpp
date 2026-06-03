@@ -30,6 +30,18 @@ bool SkyEGL2Renderer::displayImage(EGLNativeWindowType window, AVFrame *frame) {
         return false;
     }
 
+    // 下发 LUT 状态到当前 impl（脏标记或 impl 刚重建时）
+    {
+        std::lock_guard<std::mutex> lk(lutMtx_);
+        if ((lutDirty_ || implRecreated_) && rendererImp_) {
+            rendererImp_->updateLut(
+                    (lutEnabled_ && !lutData_.empty()) ? lutData_.data() : nullptr,
+                    lutIntensity_, lutEnabled_);
+            lutDirty_ = false;
+            implRecreated_ = false;
+        }
+    }
+
     EGLBoolean ret = rendererImp_->renderImage(frame);
     if (!ret) {
         ALOG_E(TAG, "displayImage() renderImage fail");
@@ -66,6 +78,25 @@ void SkyEGL2Renderer::terminate() {
 
 bool SkyEGL2Renderer::isValid() {
     return window_ && display_ && surface_ && context_;
+}
+
+void SkyEGL2Renderer::setLut(const uint8_t* rgba, int len, float intensity) {
+    std::lock_guard<std::mutex> lk(lutMtx_);
+    if (rgba == nullptr || len <= 0) {
+        lutEnabled_ = false;
+        lutDirty_ = true;
+        return;
+    }
+    lutData_.assign(rgba, rgba + len);
+    lutIntensity_ = intensity;
+    lutEnabled_ = true;
+    lutDirty_ = true;
+}
+
+void SkyEGL2Renderer::clearLut() {
+    std::lock_guard<std::mutex> lk(lutMtx_);
+    lutEnabled_ = false;
+    lutDirty_ = true;
 }
 
 EGLBoolean SkyEGL2Renderer::makeCurrent(EGLNativeWindowType window) {
@@ -203,6 +234,11 @@ EGLBoolean SkyEGL2Renderer::prepareRenderer(AVFrame *avFrame) {
         if (!rendererImp_->use()) {
             ALOG_E(TAG, "renderImp use() fail.");
             return GL_FALSE;
+        }
+        // 新建 impl：标记需把 LUT 状态回灌到新 impl（在 displayImage 下发）
+        {
+            std::lock_guard<std::mutex> lk(lutMtx_);
+            implRecreated_ = true;
         }
     }
 
@@ -386,6 +422,10 @@ void SkyEGL2RendererImp::init() {
     av2_texcoord = glGetAttribLocation(program, "av2_Texcoord");     skyElg2CheckError("glGetAttribLocation(av2_Texcoord)");
     um4_mvp = glGetUniformLocation(program, "um4_ModelViewProjection");     skyElg2CheckError("glGetUniformLocation(um4_ModelViewProjection)");
 
+    // LUT uniform（所有片段着色器同名；若被优化掉返回 -1，glUniform 对 -1 为 no-op）
+    us2_sampler_lut_ = glGetUniformLocation(program, "us2_SamplerLUT");
+    u_lut_enabled_   = glGetUniformLocation(program, "u_LutEnabled");
+
     return;
 
 fail:
@@ -485,8 +525,60 @@ EGLBoolean SkyEGL2RendererImp::renderImage(AVFrame *avFrame) {
 
     }
 
+    applyLutInRender();
+
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);      skyElg2CheckError("glDrawArrays");
     return GL_TRUE;
+}
+
+void SkyEGL2RendererImp::updateLut(const uint8_t* rgba, float intensity, bool enabled) {
+    lut_enabled_ = enabled;
+    lut_intensity_ = intensity;
+    if (rgba && enabled) {
+        constexpr size_t kLutBytes = 512 * 512 * 4;
+        lut_pending_.assign(rgba, rgba + kLutBytes);
+        lut_pending_dirty_ = true;
+    }
+}
+
+void SkyEGL2RendererImp::applyLutInRender() {
+    // 保存当前 active 纹理单元（= use() 最后设置的单元），LUT 用单元 3，结束后还原，
+    // 以免影响下一帧 uploadTexture 依赖的 active 单元状态。
+    GLint savedUnit = GL_TEXTURE0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &savedUnit);
+
+    if (lut_pending_dirty_ && !lut_pending_.empty()) {
+        if (0 == lut_texture_) {
+            glGenTextures(1, &lut_texture_);
+        }
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, lut_texture_);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 512, 512, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     lut_pending_.data());
+        lut_pending_dirty_ = false;
+        skyElg2CheckError("upload LUT texture");
+    }
+
+    if (lut_texture_ != 0) {
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, lut_texture_);
+        glUniform1i(us2_sampler_lut_, 3);
+    }
+    glUniform1f(u_lut_enabled_, (lut_enabled_ && lut_texture_ != 0) ? lut_intensity_ : 0.0f);
+
+    glActiveTexture(savedUnit);
+}
+
+void SkyEGL2RendererImp::releaseLutTexture() {
+    if (lut_texture_ != 0) {
+        glDeleteTextures(1, &lut_texture_);
+        lut_texture_ = 0;
+    }
+    lut_pending_dirty_ = false;
 }
 
 std::unique_ptr<SkyRenderer> SkyRenderer::create(RendererBackend backend) {

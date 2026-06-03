@@ -126,5 +126,6 @@ void SkyEGL2RendererRGBAImp::reset() {
         glDeleteTextures(1, &rgba_texture);
         rgba_texture = 0;
     }
+    releaseLutTexture();
     avPixFormat = AV_PIX_FMT_NONE;
 }

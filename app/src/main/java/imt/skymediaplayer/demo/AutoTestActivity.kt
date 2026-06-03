@@ -24,6 +24,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import imt.zw.skymediaplayer.player.IMediaPlayer
 import imt.zw.skymediaplayer.player.SkyMediaPlayer
+import imt.zw.skymediaplayer.utils.LutLoader
 import imt.zw.skymediaplayer.widget.SkyVideoView
 
 /**
@@ -63,6 +64,14 @@ class AutoTestActivity : AppCompatActivity() {
 
         /** AI 字幕测试视频（英文语音，适合 Whisper 识别） */
         private const val SUBTITLE_TEST_VIDEO = "https://media.w3.org/2010/05/sintel/trailer.mp4"
+
+        /** LUT 画质滤镜内置预设（assets，512x512 GPUImage lookup） */
+        private val LUT_PRESET_ASSETS = listOf(
+            "lut/1001.png", "lut/1002.png", "lut/1003.png", "lut/1004.png", "lut/1005.png"
+        )
+
+        /** LUT 应用后验证播放持续推进的等待时长（毫秒） */
+        private const val LUT_VERIFY_DURATION_MS = 3000L
     }
 
     // UI 组件
@@ -132,6 +141,36 @@ class AutoTestActivity : AppCompatActivity() {
      */
     private fun buildTestCases() {
         testCases.clear()
+
+        // LUT 画质滤镜测试（放最前，便于快速反馈）：软解走渲染器，覆盖 OpenGL ES 与 Vulkan
+        testCases.add(
+            TestCase(
+                name = "LUT 滤镜 + 软解 + OpenGL ES",
+                decoderMode = 2,
+                rendererBackend = 0,
+                videoUrl = ONLINE_VIDEO_HTTPS,
+                category = TestCategory.LUT_FILTER
+            )
+        )
+        testCases.add(
+            TestCase(
+                name = "LUT 滤镜 + 软解 + Vulkan",
+                decoderMode = 2,
+                rendererBackend = 1,
+                videoUrl = ONLINE_VIDEO_HTTPS,
+                category = TestCategory.LUT_FILTER
+            )
+        )
+        // 暂停态切换 LUT 应立即重绘当前帧（本地视频，软解+OpenGL；重绘逻辑在 ffplay 层，与后端无关）
+        testCases.add(
+            TestCase(
+                name = "LUT 暂停切换重绘 + 软解 + OpenGL ES",
+                decoderMode = 2,
+                rendererBackend = 0,
+                videoUrl = ONLINE_VIDEO_HTTPS,
+                category = TestCategory.LUT_PAUSE
+            )
+        )
 
         val decoderModes = listOf(
             DecoderConfig(2, "软解"),
@@ -235,7 +274,208 @@ class AutoTestActivity : AppCompatActivity() {
         when (testCase.category) {
             TestCategory.DECODE_RENDER -> executePlaybackTest(testCase)
             TestCategory.AI_SUBTITLE -> executeSubtitleTest(testCase)
+            TestCategory.LUT_FILTER -> executeLutTest(testCase)
+            TestCategory.LUT_PAUSE -> executeLutPauseTest(testCase)
         }
+    }
+
+    /**
+     * 验证「暂停态切换 LUT 立即重绘当前帧」。
+     * 流程：本地视频起播 → 暂停 → (标记)保持无滤镜 → 应用单色 LUT → (标记)保持暂停。
+     * 通过 logcat 标记，宿主在两个标记处各截一张图，对比暂停帧是否变化即可。
+     * 用例自身判定：全程保持暂停（position 基本不变、isPlaying=false），无崩溃。
+     */
+    private fun executeLutPauseTest(testCase: TestCase) {
+        try {
+            releaseCurrentPlayer()
+            val localPath = ensureLocalTestVideo()
+            if (localPath == null) {
+                onTestResult(currentTestIndex, TestStatus.FAILED, "本地测试视频准备失败")
+                return
+            }
+            testVideoView.setRendererBackend(testCase.rendererBackend)
+            testVideoView.setDecoderMode(testCase.decoderMode)
+            testVideoView.setVideoPath(localPath)
+
+            val idx = currentTestIndex
+            prepareTimeoutRunnable = Runnable {
+                onTestResult(idx, TestStatus.FAILED, "准备超时")
+            }
+            handler.postDelayed(prepareTimeoutRunnable!!, PREPARE_TIMEOUT_MS)
+
+            val poll = object : Runnable {
+                private var checkCount = 0
+                override fun run() {
+                    if (idx != currentTestIndex) return
+                    checkCount++
+                    if (testVideoView.isPlaying() && testVideoView.getCurrentPosition() > 0) {
+                        cancelPrepareTimeout()
+                        runLutPauseSequence(idx)
+                    } else if (checkCount > (PREPARE_TIMEOUT_MS / 200).toInt()) {
+                        cancelPrepareTimeout()
+                        onTestResult(idx, TestStatus.FAILED, "播放启动超时(position 未推进)")
+                    } else {
+                        handler.postDelayed(this, 200)
+                    }
+                }
+            }
+            handler.postDelayed(poll, 300)
+        } catch (e: Exception) {
+            onTestResult(currentTestIndex, TestStatus.FAILED, "异常: ${e.message}")
+        }
+    }
+
+    private fun runLutPauseSequence(idx: Int) {
+        // 先确保无滤镜，再暂停 —— 暂停帧应为原始画面
+        testVideoView.setLut(null)
+        testVideoView.pause()
+        val pausedPos = testVideoView.getCurrentPosition()
+        Log.i(TAG, "LUTPAUSE_MARKER nolut paused pos=$pausedPos")  // ← 截图点 A（无滤镜暂停帧）
+
+        handler.postDelayed({
+            if (idx != currentTestIndex) return@postDelayed
+            Log.i(TAG, "LUTPAUSE_MARKER applying")
+            val mono = LutLoader.fromAsset(this, "lut/1005.png")  // 单色，效果最明显
+            val ret = if (mono != null) testVideoView.setLut(mono) else -1
+            // 应用后仍处于暂停；若重绘逻辑生效，画面会立刻变单色
+
+            handler.postDelayed({
+                if (idx != currentTestIndex) return@postDelayed
+                val playing = testVideoView.isPlaying()
+                val pos2 = testVideoView.getCurrentPosition()
+                Log.i(TAG, "LUTPAUSE_MARKER applied playing=$playing pos=$pausedPos->$pos2 setLut=$ret")  // ← 截图点 B（单色暂停帧）
+                testVideoView.setLut(null)
+
+                val stayedPaused = !playing && kotlin.math.abs(pos2 - pausedPos) < 500
+                if (ret == 0 && stayedPaused) {
+                    onTestResult(idx, TestStatus.PASSED, "暂停态切LUT: 保持暂停并已请求重绘 (pos $pausedPos→$pos2)")
+                } else {
+                    onTestResult(idx, TestStatus.FAILED, "暂停态异常: setLut=$ret playing=$playing pos=$pausedPos→$pos2")
+                }
+            }, 2500)
+        }, 2500)
+    }
+
+    /**
+     * 执行 LUT 画质滤镜测试
+     * 用本地测试视频（无网络依赖）软解走渲染器路径，依次应用全部预设 + 非法输入 + 清除，
+     * 验证 setLut 返回 0 且应用后画面持续推进（渲染器未崩溃/无致命错误）。
+     */
+    private fun executeLutTest(testCase: TestCase) {
+        try {
+            releaseCurrentPlayer()
+
+            val localPath = ensureLocalTestVideo()
+            if (localPath == null) {
+                onTestResult(currentTestIndex, TestStatus.FAILED, "本地测试视频准备失败")
+                return
+            }
+
+            testVideoView.setRendererBackend(testCase.rendererBackend)
+            testVideoView.setDecoderMode(testCase.decoderMode)
+            testVideoView.setVideoPath(localPath)
+
+            val idx = currentTestIndex
+            prepareTimeoutRunnable = Runnable {
+                Log.e(TAG, "LUT test timeout (prepare): ${testCase.name}")
+                onTestResult(idx, TestStatus.FAILED, "准备超时")
+            }
+            handler.postDelayed(prepareTimeoutRunnable!!, PREPARE_TIMEOUT_MS)
+
+            // 等待真正开始渲染（position > 0），再应用 LUT，避免与起播竞态
+            val poll = object : Runnable {
+                private var checkCount = 0
+                override fun run() {
+                    if (idx != currentTestIndex) return  // 已切到下一个测试，停止，避免泄漏
+                    checkCount++
+                    if (testVideoView.isPlaying() && testVideoView.getCurrentPosition() > 0) {
+                        cancelPrepareTimeout()
+                        Log.i(TAG, "LUT test playback advancing: ${testCase.name}")
+                        applyLutSequence(testCase, idx)
+                    } else if (checkCount > (PREPARE_TIMEOUT_MS / 200).toInt()) {
+                        cancelPrepareTimeout()
+                        onTestResult(idx, TestStatus.FAILED, "播放启动超时(position 未推进)")
+                    } else {
+                        handler.postDelayed(this, 200)
+                    }
+                }
+            }
+            handler.postDelayed(poll, 300)
+        } catch (exception: Exception) {
+            Log.e(TAG, "LUT test exception: ${testCase.name}", exception)
+            onTestResult(currentTestIndex, TestStatus.FAILED, "异常: ${exception.message}")
+        }
+    }
+
+    /** 把内置测试视频从 assets 复制到 filesDir，返回本地路径 */
+    private fun ensureLocalTestVideo(): String? {
+        return try {
+            val dst = java.io.File(filesDir, "sky_lut_test.mp4")
+            if (!dst.exists() || dst.length() == 0L) {
+                assets.open("test/sky_lut_test.mp4").use { input ->
+                    dst.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+            dst.absolutePath
+        } catch (e: Exception) {
+            Log.e(TAG, "ensureLocalTestVideo failed", e)
+            null
+        }
+    }
+
+    private fun applyLutSequence(testCase: TestCase, idx: Int) {
+        val posBefore = testVideoView.getCurrentPosition()
+
+        // 1) 依次加载并应用全部预设，校验解码成功 + setLut 返回 0
+        for (asset in LUT_PRESET_ASSETS) {
+            val rgba = LutLoader.fromAsset(this, asset)
+            if (rgba == null) {
+                onTestResult(idx, TestStatus.FAILED, "预设解码失败: $asset")
+                return
+            }
+            val ret = testVideoView.setLut(rgba)
+            if (ret != 0) {
+                onTestResult(idx, TestStatus.FAILED, "setLut 失败 code=$ret ($asset)")
+                return
+            }
+        }
+
+        // 2) 非法输入（不存在的文件 -> LutLoader 返回 null -> setLut(null) 清除，应返回 0）
+        val invalid = LutLoader.fromFile("/nonexistent_lut_xyz.png")
+        val clearRet = testVideoView.setLut(invalid)
+        if (clearRet != 0) {
+            onTestResult(idx, TestStatus.FAILED, "清除(非法输入) 返回非0: $clearRet")
+            return
+        }
+
+        // 3) 保持一个强效果预设（单色），等待数秒后验证画面持续推进
+        val mono = LutLoader.fromAsset(this, "lut/1005.png")
+        if (mono == null || testVideoView.setLut(mono) != 0) {
+            onTestResult(idx, TestStatus.FAILED, "应用单色预设失败")
+            return
+        }
+
+        handler.postDelayed({
+            if (idx != currentTestIndex) return@postDelayed
+            val playing = testVideoView.isPlaying()
+            val posAfter = testVideoView.getCurrentPosition()
+            // 清除滤镜恢复
+            testVideoView.setLut(null)
+
+            if (playing && posAfter > posBefore) {
+                onTestResult(
+                    idx,
+                    TestStatus.PASSED,
+                    "5 预设+非法+清除 OK | 应用后持续渲染 ${formatTime(posBefore)}→${formatTime(posAfter)}"
+                )
+            } else {
+                onTestResult(
+                    idx,
+                    TestStatus.FAILED,
+                    "应用 LUT 后画面停滞: playing=$playing, pos=$posBefore→$posAfter"
+                )
+            }
+        }, LUT_VERIFY_DURATION_MS)
     }
 
     /**
@@ -743,7 +983,9 @@ class AutoTestActivity : AppCompatActivity() {
 
     enum class TestCategory {
         DECODE_RENDER,
-        AI_SUBTITLE
+        AI_SUBTITLE,
+        LUT_FILTER,
+        LUT_PAUSE
     }
 
     enum class TestStatus {

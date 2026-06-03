@@ -127,5 +127,6 @@ void SkyEGL2RendererYUV420pImp::reset() {
         }
     }
     plane_textures.fill(0);
+    releaseLutTexture();
     avPixFormat = AV_PIX_FMT_NONE;
 }

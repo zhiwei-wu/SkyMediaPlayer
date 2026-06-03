@@ -550,6 +550,16 @@ class SkyVideoView(context: Context,
     fun isWhisperEnabled(): Boolean = _isWhisperEnabled
 
     /**
+     * 设置 LUT 画质滤镜（GPU 渲染）
+     * @param rgba 512x512 RGBA 字节（512*512*4）；传 null 关闭
+     * @param intensity 强度 0..1
+     * @return 0 成功，负值失败
+     */
+    fun setLut(rgba: ByteArray?, intensity: Float = 1.0f): Int {
+        return (_mediaPlayer as? SkyMediaPlayer)?.setLut(rgba, intensity) ?: -1
+    }
+
+    /**
      * 设置字幕文本（供外部调用，如字幕回调）
      * @param text 字幕文本，传 null 或空字符串隐藏字幕
      */
@@ -588,6 +598,34 @@ class SkyVideoView(context: Context,
      */
     fun getPlayerOverlay(): SkyPlayerOverlay? {
         return _playerOverlay
+    }
+
+    /**
+     * 配置画质面板的滤镜列表
+     */
+    fun setQualityFilterItems(items: List<imt.zw.skymediaplayer.widget.control.SkyQualityPanel.QualityFilterItem>) {
+        _playerOverlay?.setQualityFilterItems(items)
+    }
+
+    /**
+     * 设置画质面板当前选中滤镜
+     */
+    fun setSelectedQualityFilter(id: String?) {
+        _playerOverlay?.setSelectedQualityFilter(id)
+    }
+
+    /**
+     * 设置画质面板滤镜强度（0-100）
+     */
+    fun setQualityIntensity(percent: Int) {
+        _playerOverlay?.setQualityIntensity(percent)
+    }
+
+    /**
+     * 设置画质面板回调（选择滤镜 / 调节强度）
+     */
+    fun setOnQualityPanelListener(listener: imt.zw.skymediaplayer.widget.control.SkyQualityPanel.OnQualityPanelListener?) {
+        _playerOverlay?.setOnQualityPanelListener(listener)
     }
 
     /**

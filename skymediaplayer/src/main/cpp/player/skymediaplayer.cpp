@@ -263,6 +263,15 @@ void SkyVideoOutHandler::setWindow(EGLNativeWindowType window) {
             renderer_ = SkyRenderer::create(rendererBackend_);
         }
 
+        // 渲染器（可能是新建的）回灌已缓存的 LUT 状态
+        if (renderer_) {
+            if (lutEnabled_ && !lutData_.empty()) {
+                renderer_->setLut(lutData_.data(), static_cast<int>(lutData_.size()), lutIntensity_);
+            } else {
+                renderer_->clearLut();
+            }
+        }
+
         ALOG_I(TAG, "Window set successfully, renderer ready: %s", renderer_ ? "true" : "false");
     } else {
         ALOG_W(TAG, "setWindow called with null window");
@@ -289,6 +298,27 @@ void SkyVideoOutHandler::releaseResources() {
     }
 
     ALOG_I(TAG, "SkyVideoOutHandler resources released (renderer preserved)");
+}
+
+void SkyVideoOutHandler::setLut(const uint8_t* rgba, int len, float intensity) {
+    std::lock_guard<std::mutex> lock(mtx);
+    if (rgba == nullptr || len <= 0) {
+        lutEnabled_ = false;
+        lutData_.clear();
+        if (renderer_) renderer_->clearLut();
+        return;
+    }
+    lutData_.assign(rgba, rgba + len);
+    lutIntensity_ = intensity;
+    lutEnabled_ = true;
+    if (renderer_) renderer_->setLut(lutData_.data(), len, intensity);
+}
+
+void SkyVideoOutHandler::clearLut() {
+    std::lock_guard<std::mutex> lock(mtx);
+    lutEnabled_ = false;
+    lutData_.clear();
+    if (renderer_) renderer_->clearLut();
 }
 
 bool SkyVideoOutHandler::displayImage(AVFrame *frame) {
@@ -756,6 +786,26 @@ int SkyPlayer::setAudioFilter(const char* filters) {
         ALOG_I(TAG, "setAudioFilter() success: %s", filters ? filters : "(none)");
     }
     return ret;
+}
+
+int SkyPlayer::setLut(const uint8_t* rgba, int len, float intensity) {
+    std::lock_guard<std::mutex> lock(mtx);
+    if (rgba == nullptr || len <= 0) {
+        skyVideoOutHandler_.clearLut();
+        // 暂停时也立即按新参数重绘当前帧
+        if (is) sky_request_video_redraw(is);
+        ALOG_I(TAG, "setLut() cleared");
+        return 0;
+    }
+    if (len != 512 * 512 * 4) {
+        ALOG_E(TAG, "setLut() invalid len=%d (expected %d)", len, 512 * 512 * 4);
+        return -1;
+    }
+    skyVideoOutHandler_.setLut(rgba, len, intensity);
+    // 暂停时也立即按新参数重绘当前帧
+    if (is) sky_request_video_redraw(is);
+    ALOG_I(TAG, "setLut() success, intensity=%.2f", intensity);
+    return 0;
 }
 
 void SkyPlayer::setRendererBackend(RendererBackend backend) {

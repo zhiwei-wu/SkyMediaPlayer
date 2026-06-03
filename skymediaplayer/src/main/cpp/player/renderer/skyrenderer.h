@@ -2,6 +2,9 @@
 #define MY_PLAYER_SKYRENDERER_H
 
 #include <array>
+#include <vector>
+#include <mutex>
+#include <cstdint>
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
 #include <android/native_window.h>
@@ -64,6 +67,14 @@ public:
     static void buildOrthoMatrix(Matrix4x4Std &matrix, GLfloat left, GLfloat right,
                                  GLfloat bottom, GLfloat top, GLfloat near, GLfloat far);
 
+    /**
+     * 更新当前 impl 的 LUT 状态（在 GL 线程调用）
+     * @param rgba 512x512 RGBA 数据；为 nullptr 表示不更新数据（仅切换开关/强度）
+     * @param intensity 强度 0..1
+     * @param enabled 是否启用
+     */
+    void updateLut(const uint8_t* rgba, float intensity, bool enabled);
+
 public:
     AVPixelFormat avPixFormat = AV_PIX_FMT_NONE;
 
@@ -92,6 +103,20 @@ protected:
     int     frameSarNum;
     int     frameSarDen;
     GLsizei lastBufferWidth;
+
+    // LUT（GPUImage 512x512 lookup）状态
+    GLuint lut_texture_ = 0;
+    GLint  us2_sampler_lut_ = -1;
+    GLint  u_lut_enabled_ = -1;
+    bool   lut_enabled_ = false;
+    float  lut_intensity_ = 1.0f;
+    std::vector<uint8_t> lut_pending_;   // 512*512*4，待上传
+    bool   lut_pending_dirty_ = false;
+
+    // 在 renderImage() 内绑定 LUT 纹理并设置 uniform（保存/恢复 active 纹理单元）
+    void applyLutInRender();
+    // 释放 LUT 纹理（在 reset() 中调用，需 GL 上下文 current）
+    void releaseLutTexture();
 };
 
 class SkyRenderer {
@@ -100,6 +125,16 @@ public:
     virtual bool displayImage(EGLNativeWindowType window, AVFrame *frame) = 0;
     virtual bool isValid() = 0;
     virtual void terminate() = 0;
+
+    /**
+     * 设置 LUT 滤镜（512x512 GPUImage lookup，RGBA）。线程安全，可播放中调用。
+     * @param rgba 512*512*4 字节
+     * @param len 字节数（应为 512*512*4）
+     * @param intensity 强度 0..1
+     */
+    virtual void setLut(const uint8_t* rgba, int len, float intensity) {}
+    /** 关闭 LUT 滤镜 */
+    virtual void clearLut() {}
 
     /**
      * 工厂方法：根据渲染后端类型创建对应的渲染器实例
@@ -117,6 +152,9 @@ public:
     bool isValid() override;
     void terminate() override;
 
+    void setLut(const uint8_t* rgba, int len, float intensity) override;
+    void clearLut() override;
+
 private:
     EGLBoolean setup();
     EGLBoolean makeCurrent(EGLNativeWindowType window);
@@ -128,6 +166,14 @@ private:
 
 private:
     std::unique_ptr<SkyEGL2RendererImp> rendererImp_;
+
+    // LUT 状态（跨 impl 重建存活），脏标记驱动，在 displayImage() 下发给当前 impl
+    std::mutex lutMtx_;
+    std::vector<uint8_t> lutData_;
+    float lutIntensity_ = 1.0f;
+    bool  lutEnabled_ = false;
+    bool  lutDirty_ = false;
+    bool  implRecreated_ = false;
 
     EGLNativeWindowType window_;
     EGLDisplay display_;

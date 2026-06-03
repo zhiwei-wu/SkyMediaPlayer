@@ -14,6 +14,13 @@
         <!-- Customize your theme here. -->
     </style>
 
+    <!-- 首页主题：去掉 ActionBar，避免 Android 15+/16 边到边强制下内容与 ActionBar/状态栏重叠；
+         状态栏内边距由代码用 WindowInsets 处理 -->
+    <style name="Theme.MyPlayer.Home" parent="Theme.MyPlayer">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+    </style>
+
     <!-- Full screen theme for video activity -->
     <style name="Theme.MyPlayer.Fullscreen" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="android:windowNoTitle">true</item>

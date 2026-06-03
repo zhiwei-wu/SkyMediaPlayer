@@ -36,6 +36,7 @@ class SkyPlayerOverlay @JvmOverloads constructor(
     private lateinit var subtitleTextView: TextView
     private lateinit var controlView: SkyPlayerControlView
     private lateinit var settingsPanel: SkySubtitleSettingsPanel
+    private lateinit var qualityPanel: SkyQualityPanel
 
     // 状态
     private var isControlVisible = false
@@ -49,6 +50,7 @@ class SkyPlayerOverlay @JvmOverloads constructor(
     private var onSubtitleSettingsChangeListener: OnSubtitleSettingsChangeListener? = null
     private var onRotateButtonClickListener: View.OnClickListener? = null
     private var onDebugButtonClickListener: View.OnClickListener? = null
+    private var onQualityPanelListener: SkyQualityPanel.OnQualityPanelListener? = null
 
     init {
         initView()
@@ -100,6 +102,11 @@ class SkyPlayerOverlay @JvmOverloads constructor(
                 showSettingsPanel()
             }
 
+            // 设置画质入口按钮点击监听 —— 打开画质面板
+            setOnFilterButtonClickListener {
+                showQualityPanel()
+            }
+
             // 设置旋转按钮点击监听
             setOnRotateButtonClickListener {
                 onRotateButtonClickListener?.onClick(it)
@@ -131,6 +138,21 @@ class SkyPlayerOverlay @JvmOverloads constructor(
             }
         }
         addView(settingsPanel)
+
+        // 画质面板（最顶层）
+        qualityPanel = SkyQualityPanel(context).apply {
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+            setOnQualityPanelListener(object : SkyQualityPanel.OnQualityPanelListener {
+                override fun onFilterSelected(item: SkyQualityPanel.QualityFilterItem) {
+                    onQualityPanelListener?.onFilterSelected(item)
+                }
+                override fun onIntensityChanged(percent: Int) {
+                    onQualityPanelListener?.onIntensityChanged(percent)
+                }
+            })
+            setOnDismissListener { resetAutoHideTimer() }
+        }
+        addView(qualityPanel)
     }
 
     /**
@@ -138,8 +160,8 @@ class SkyPlayerOverlay @JvmOverloads constructor(
      */
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (event.action == MotionEvent.ACTION_DOWN) {
-            // 如果设置面板正在显示，不处理触摸事件（由面板自己处理）
-            if (settingsPanel.isShowing()) {
+            // 如果设置面板/画质面板正在显示，不处理触摸事件（由面板自己处理）
+            if (settingsPanel.isShowing() || qualityPanel.isShowing()) {
                 return false
             }
 
@@ -154,8 +176,8 @@ class SkyPlayerOverlay @JvmOverloads constructor(
      * 拦截触摸事件
      */
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
-        // 如果设置面板正在显示，不拦截事件
-        if (settingsPanel.isShowing()) {
+        // 如果设置面板/画质面板正在显示，不拦截事件
+        if (settingsPanel.isShowing() || qualityPanel.isShowing()) {
             return false
         }
 
@@ -303,6 +325,35 @@ class SkyPlayerOverlay @JvmOverloads constructor(
      */
     fun updatePlayPauseButton(playing: Boolean) {
         controlView.updatePlayPauseButton(playing)
+    }
+
+    /**
+     * 显示画质面板
+     */
+    fun showQualityPanel() {
+        // 显示前先隐藏播控栏，避免遮挡
+        hideControl()
+        qualityPanel.show()
+    }
+
+    /** 设置画质滤镜列表 */
+    fun setQualityFilterItems(items: List<SkyQualityPanel.QualityFilterItem>) {
+        qualityPanel.setFilterItems(items)
+    }
+
+    /** 设置当前选中滤镜 */
+    fun setSelectedQualityFilter(id: String?) {
+        qualityPanel.setSelectedFilter(id)
+    }
+
+    /** 设置滤镜强度（0-100） */
+    fun setQualityIntensity(percent: Int) {
+        qualityPanel.setIntensity(percent)
+    }
+
+    /** 设置画质面板回调 */
+    fun setOnQualityPanelListener(listener: SkyQualityPanel.OnQualityPanelListener?) {
+        this.onQualityPanelListener = listener
     }
 
     /**

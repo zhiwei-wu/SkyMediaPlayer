@@ -22,14 +22,31 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import imt.zw.skymediaplayer.player.IMediaPlayer
 import imt.zw.skymediaplayer.player.SkyMediaPlayer
+import imt.zw.skymediaplayer.utils.LutLoader
 import imt.zw.skymediaplayer.widget.SkyVideoView
+import imt.zw.skymediaplayer.widget.control.SkyQualityPanel
 import imt.zw.skymediaplayer.widget.control.OnSubtitleSettingsChangeListener
 import imt.zw.skymediaplayer.widget.control.SubtitleSettings
 
 class SkyVideoActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "SkyVideoActivity"
+
+        // 内置画质滤镜预设（id 即 assets 文件名；来自 QQLive lutCache，512x512 GPUImage lookup）
+        private val LUT_PRESETS = listOf(
+            "1001" to "增强",
+            "1002" to "清新",
+            "1003" to "鲜艳",
+            "1004" to "质感",
+            "1005" to "单色",
+        )
+        private const val FILTER_NONE = "none"
+        private const val FILTER_DEFAULT = "default"
     }
+
+    // 当前应用的 LUT 数据与强度（强度滑动时复用同一份数据重新应用）
+    private var currentLutRgba: ByteArray? = null
+    private var currentLutIntensity: Int = 100
 
     private lateinit var mSkyVideoView: SkyVideoView
     private var wasPlayingBeforePause = false
@@ -98,6 +115,9 @@ class SkyVideoActivity : AppCompatActivity() {
         // 设置调试信息按钮监听
         setupDebugButton()
 
+        // 设置画质滤镜按钮监听
+        setupFilterButton()
+
         // 设置 AI 字幕设置变更监听
         setupSubtitleSettingsListener()
 
@@ -141,6 +161,75 @@ class SkyVideoActivity : AppCompatActivity() {
                 ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
             }
             Log.i(TAG, "Screen rotation toggled, new orientation: $requestedOrientation")
+        }
+    }
+
+    /**
+     * 配置画质面板：填充滤镜列表 + 处理选择/强度回调。
+     * 入口为播控栏「画质」按钮，点击后由面板（竖屏下弹/横屏右弹）展示。
+     */
+    private fun setupFilterButton() {
+        val items = mutableListOf(
+            SkyQualityPanel.QualityFilterItem(FILTER_NONE, "无", "原画")
+        )
+        LUT_PRESETS.forEach { (id, name) ->
+            items.add(SkyQualityPanel.QualityFilterItem(id, name))
+        }
+        items.add(SkyQualityPanel.QualityFilterItem(FILTER_DEFAULT, "默认", "自选文件"))
+
+        mSkyVideoView.setQualityFilterItems(items)
+        mSkyVideoView.setSelectedQualityFilter(FILTER_NONE)
+        mSkyVideoView.setQualityIntensity(currentLutIntensity)
+
+        mSkyVideoView.setOnQualityPanelListener(object : SkyQualityPanel.OnQualityPanelListener {
+            override fun onFilterSelected(item: SkyQualityPanel.QualityFilterItem) {
+                applyFilter(item.id, item.title)
+            }
+            override fun onIntensityChanged(percent: Int) {
+                currentLutIntensity = percent
+                // 复用当前滤镜数据，仅以新强度重新应用
+                currentLutRgba?.let { mSkyVideoView.setLut(it, percent / 100f) }
+            }
+        })
+    }
+
+    private fun applyFilter(id: String, name: String) {
+        when (id) {
+            FILTER_NONE -> {
+                currentLutRgba = null
+                mSkyVideoView.setLut(null)
+                Toast.makeText(this, "已关闭画质滤镜", Toast.LENGTH_SHORT).show()
+                return
+            }
+            FILTER_DEFAULT -> {
+                val path = FilterPreferences.getFilterFilePath(this)
+                if (path.isNullOrEmpty()) {
+                    Toast.makeText(this, "请先在主界面「设置」中选择滤镜文件", Toast.LENGTH_LONG).show()
+                    return
+                }
+                val rgba = LutLoader.fromFile(path)
+                if (rgba == null) {
+                    Toast.makeText(this, "默认滤镜加载失败（需 512x512 PNG）", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                currentLutRgba = rgba
+                mSkyVideoView.setLut(rgba, currentLutIntensity / 100f)
+                Toast.makeText(this, "已应用：$name", Toast.LENGTH_SHORT).show()
+            }
+            else -> {
+                val rgba = LutLoader.fromAsset(this, "lut/$id.png")
+                if (rgba == null) {
+                    Toast.makeText(this, "滤镜加载失败：$name", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                currentLutRgba = rgba
+                mSkyVideoView.setLut(rgba, currentLutIntensity / 100f)
+                Toast.makeText(this, "已应用：$name", Toast.LENGTH_SHORT).show()
+            }
+        }
+        // 硬解直渲模式下滤镜不经过渲染器，提示用户
+        if (mSkyVideoView.getActiveDecoderMode() == 0) {
+            Toast.makeText(this, "提示：硬解直渲模式下滤镜不生效，请切换到软解/硬解Buffer", Toast.LENGTH_LONG).show()
         }
     }
 

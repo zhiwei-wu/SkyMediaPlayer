@@ -17,6 +17,8 @@
 #include <string>
 
 // ========== GLSL Shader 源码（参考，实际使用预编译的 SPIR-V 字节码） ==========
+// 注意：权威着色器源码在 renderer/shaders/*.{vert,frag}（含 LUT，binding=3 + push_constant lutEnabled），
+//       改完用 renderer/shaders/gen_spirv.sh 重新生成 sky_vk_shaders.h。以下字符串仅作历史参考、运行时未使用。
 // 所有片段着色器输出 RGBA 通道顺序 vec4(r,g,b,a)
 
 // 顶点着色器：全屏四边形
@@ -174,21 +176,40 @@ void SkyVkRenderer::terminate() {
         }
     }
     
-    // 清理命令缓冲
+    // 清理命令缓冲（销毁命令池会自动释放其分配的命令缓冲；
+    // 置空避免 cleanupSwapchain() 再对已销毁的池调用 vkFreeCommandBuffers）
     if (commandPool_ != VK_NULL_HANDLE) {
         vkDestroyCommandPool(device_, commandPool_, nullptr);
+        commandPool_ = VK_NULL_HANDLE;
     }
-    
+    commandBuffers_.clear();
+
     // 清理纹理资源
     cleanupTextureResources();
-    
-    // 清理帧缓冲
+
+    // 清理常驻 LUT 纹理
+    if (lutTexture_.sampler != VK_NULL_HANDLE) {
+        vkDestroySampler(device_, lutTexture_.sampler, nullptr);
+    }
+    if (lutTexture_.imageView != VK_NULL_HANDLE) {
+        vkDestroyImageView(device_, lutTexture_.imageView, nullptr);
+    }
+    if (lutTexture_.image != VK_NULL_HANDLE) {
+        vkDestroyImage(device_, lutTexture_.image, nullptr);
+    }
+    if (lutTexture_.memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, lutTexture_.memory, nullptr);
+    }
+    lutTexture_ = {};
+
+    // 清理帧缓冲（清空容器，避免后续 cleanupSwapchain() 重复销毁同一句柄导致 abort）
     for (auto framebuffer : framebuffers_) {
         if (framebuffer != VK_NULL_HANDLE) {
             vkDestroyFramebuffer(device_, framebuffer, nullptr);
         }
     }
-    
+    framebuffers_.clear();
+
     // 清理管线
     if (graphicsPipeline_ != VK_NULL_HANDLE) {
         vkDestroyPipeline(device_, graphicsPipeline_, nullptr);
@@ -489,6 +510,21 @@ bool SkyVkRenderer::displayImage(EGLNativeWindowType window, AVFrame *frame) {
         }
     }
     
+    // LUT 数据下发（变更时；等设备空闲后重传到常驻纹理，512x512 同尺寸不会重建，descriptor 仍有效）
+    {
+        std::lock_guard<std::mutex> lk(lutMtx_);
+        if (lutPendingDirty_) {
+            vkDeviceWaitIdle(device_);
+            if (lutEnabled_ && lutPending_.size() == static_cast<size_t>(512 * 512 * 4)
+                && lutTexture_.image != VK_NULL_HANDLE) {
+                uploadTextureData(lutTexture_, lutPending_.data(), lutPending_.size(),
+                                  512, 512, 512 * 4, VK_FORMAT_R8G8B8A8_UNORM);
+            }
+            lutPushValue_ = lutEnabled_ ? lutIntensity_ : 0.0f;
+            lutPendingDirty_ = false;
+        }
+    }
+
     // 渲染一帧
     uint32_t imageIndex;
     VkResult result = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX,
@@ -999,12 +1035,19 @@ bool SkyVkRenderer::createGraphicsPipeline() {
     dynamicState.dynamicStateCount = 2;
     dynamicState.pDynamicStates = dynamicStates;
     
-    // Pipeline layout
+    // Pipeline layout（含 LUT 开关/强度 push constant）
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(float);
+
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 1;
     pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout_;
-    
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+
     VkResult result = vkCreatePipelineLayout(device_, &pipelineLayoutInfo, nullptr, &pipelineLayout_);
     if (result != VK_SUCCESS) {
         ALOG_E(TAG, "Failed to create pipeline layout: %d", result);
@@ -1179,16 +1222,72 @@ bool SkyVkRenderer::createTextureResources(AVPixelFormat format) {
         }
     }
     
+    // 常驻 LUT 纹理（与像素格式无关，512x512 RGBA）
+    if (!ensureLutTexture()) {
+        ALOG_E(TAG, "Failed to ensure LUT texture");
+        return false;
+    }
+
     ALOG_I(TAG, "Texture resources created: %d textures", numTextures);
     return true;
 }
 
+bool SkyVkRenderer::ensureLutTexture() {
+    if (lutTexture_.image != VK_NULL_HANDLE) {
+        return true;  // 已创建，跨像素格式复用
+    }
+    if (!createTextureImage(lutTexture_, VK_FORMAT_R8G8B8A8_UNORM, 512, 512)) {
+        return false;
+    }
+    if (!createTextureImageView(lutTexture_, VK_FORMAT_R8G8B8A8_UNORM)) {
+        return false;
+    }
+    if (!createTextureSampler(lutTexture_)) {
+        return false;
+    }
+    // 上传一张全 0 占位，把 layout 切到 SHADER_READ_ONLY，保证 binding=3 可采样
+    std::vector<uint8_t> zero(512 * 512 * 4, 0);
+    uploadTextureData(lutTexture_, zero.data(), zero.size(), 512, 512, 512 * 4,
+                      VK_FORMAT_R8G8B8A8_UNORM);
+    // 若已有待上传的 LUT 数据，触发下一帧重传
+    if (lutEnabled_ && lutPending_.size() == static_cast<size_t>(512 * 512 * 4)) {
+        lutPendingDirty_ = true;
+    }
+    ALOG_I(TAG, "LUT texture (512x512) created");
+    return true;
+}
+
+void SkyVkRenderer::setLut(const uint8_t* rgba, int len, float intensity) {
+    std::lock_guard<std::mutex> lk(lutMtx_);
+    if (rgba == nullptr || len <= 0) {
+        lutEnabled_ = false;
+        lutPendingDirty_ = true;
+        return;
+    }
+    lutPending_.assign(rgba, rgba + len);
+    lutIntensity_ = intensity;
+    lutEnabled_ = true;
+    lutPendingDirty_ = true;
+}
+
+void SkyVkRenderer::clearLut() {
+    std::lock_guard<std::mutex> lk(lutMtx_);
+    lutEnabled_ = false;
+    lutPendingDirty_ = true;
+}
+
 bool SkyVkRenderer::createDescriptorSets() {
     FUNC_TRACE();
-    
+
+    // 确保 LUT 常驻纹理就绪（binding=3 必须有有效 image 可采样）
+    if (!ensureLutTexture()) {
+        ALOG_E(TAG, "ensureLutTexture failed");
+        return false;
+    }
+
     // 创建 descriptor set layout
     std::vector<VkDescriptorSetLayoutBinding> bindings;
-    
+
     for (size_t i = 0; i < yuvTextures_.size(); i++) {
         VkDescriptorSetLayoutBinding binding{};
         binding.binding = i;
@@ -1198,7 +1297,18 @@ bool SkyVkRenderer::createDescriptorSets() {
         binding.pImmutableSamplers = nullptr;
         bindings.push_back(binding);
     }
-    
+
+    // LUT 采样器固定 binding=3
+    {
+        VkDescriptorSetLayoutBinding lutBinding{};
+        lutBinding.binding = LUT_BINDING;
+        lutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        lutBinding.descriptorCount = 1;
+        lutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        lutBinding.pImmutableSamplers = nullptr;
+        bindings.push_back(lutBinding);
+    }
+
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -1221,6 +1331,13 @@ bool SkyVkRenderer::createDescriptorSets() {
         poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         poolSize.descriptorCount = MAX_FRAMES_IN_FLIGHT;
         poolSizes.push_back(poolSize);
+    }
+    // LUT 采样器
+    {
+        VkDescriptorPoolSize lutPool{};
+        lutPool.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        lutPool.descriptorCount = MAX_FRAMES_IN_FLIGHT;
+        poolSizes.push_back(lutPool);
     }
     
     VkDescriptorPoolCreateInfo poolInfo{};
@@ -1256,17 +1373,18 @@ bool SkyVkRenderer::createDescriptorSets() {
         return false;
     }
     
-    // 更新 descriptor sets
+    // 更新 descriptor sets（平面 + LUT binding 3）
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        size_t n = yuvTextures_.size();
         // imageInfos 必须与 descriptorWrites 生命周期一致，避免悬空指针
-        std::vector<VkDescriptorImageInfo> imageInfos(yuvTextures_.size());
-        std::vector<VkWriteDescriptorSet> descriptorWrites(yuvTextures_.size());
-        
-        for (size_t j = 0; j < yuvTextures_.size(); j++) {
+        std::vector<VkDescriptorImageInfo> imageInfos(n + 1);
+        std::vector<VkWriteDescriptorSet> descriptorWrites(n + 1);
+
+        for (size_t j = 0; j < n; j++) {
             imageInfos[j].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             imageInfos[j].imageView = yuvTextures_[j].imageView;
             imageInfos[j].sampler = yuvTextures_[j].sampler;
-            
+
             descriptorWrites[j].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             descriptorWrites[j].dstSet = descriptorSets_[i];
             descriptorWrites[j].dstBinding = j;
@@ -1275,7 +1393,19 @@ bool SkyVkRenderer::createDescriptorSets() {
             descriptorWrites[j].descriptorCount = 1;
             descriptorWrites[j].pImageInfo = &imageInfos[j];
         }
-        
+
+        // LUT binding 3 -> 常驻 lutTexture_
+        imageInfos[n].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        imageInfos[n].imageView = lutTexture_.imageView;
+        imageInfos[n].sampler = lutTexture_.sampler;
+        descriptorWrites[n].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[n].dstSet = descriptorSets_[i];
+        descriptorWrites[n].dstBinding = LUT_BINDING;
+        descriptorWrites[n].dstArrayElement = 0;
+        descriptorWrites[n].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[n].descriptorCount = 1;
+        descriptorWrites[n].pImageInfo = &imageInfos[n];
+
         vkUpdateDescriptorSets(device_, static_cast<uint32_t>(descriptorWrites.size()),
                               descriptorWrites.data(), 0, nullptr);
     }
@@ -1581,7 +1711,11 @@ void SkyVkRenderer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline_);
-    
+
+    // LUT 开关/强度（push constant）
+    vkCmdPushConstants(commandBuffer, pipelineLayout_, VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof(float), &lutPushValue_);
+
     // 设置动态 viewport 和 scissor（跟随 swapchain 尺寸）
     VkViewport viewport{};
     viewport.x = 0.0f;

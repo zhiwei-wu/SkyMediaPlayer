@@ -48,6 +48,10 @@ class SkyVideoActivity : AppCompatActivity() {
     private var currentLutRgba: ByteArray? = null
     private var currentLutIntensity: Int = 100
 
+    // 当前画质增强参数（各 0-100，0=关闭）
+    private var currentEnhanceSharpness: Int = 0
+    private var currentEnhanceDeband: Int = 0
+
     private lateinit var mSkyVideoView: SkyVideoView
     private var wasPlayingBeforePause = false
 
@@ -180,6 +184,7 @@ class SkyVideoActivity : AppCompatActivity() {
         mSkyVideoView.setQualityFilterItems(items)
         mSkyVideoView.setSelectedQualityFilter(FILTER_NONE)
         mSkyVideoView.setQualityIntensity(currentLutIntensity)
+        mSkyVideoView.setEnhanceValues(currentEnhanceSharpness, currentEnhanceDeband)
 
         mSkyVideoView.setOnQualityPanelListener(object : SkyQualityPanel.OnQualityPanelListener {
             override fun onFilterSelected(item: SkyQualityPanel.QualityFilterItem) {
@@ -189,6 +194,11 @@ class SkyVideoActivity : AppCompatActivity() {
                 currentLutIntensity = percent
                 // 复用当前滤镜数据，仅以新强度重新应用
                 currentLutRgba?.let { mSkyVideoView.setLut(it, percent / 100f) }
+            }
+            override fun onEnhanceChanged(sharpness: Int, deband: Int) {
+                currentEnhanceSharpness = sharpness
+                currentEnhanceDeband = deband
+                mSkyVideoView.setEnhance(sharpness / 100f, deband / 100f)
             }
         })
     }

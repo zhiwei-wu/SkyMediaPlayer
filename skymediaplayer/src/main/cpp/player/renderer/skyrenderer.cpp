@@ -30,14 +30,20 @@ bool SkyEGL2Renderer::displayImage(EGLNativeWindowType window, AVFrame *frame) {
         return false;
     }
 
-    // 下发 LUT 状态到当前 impl（脏标记或 impl 刚重建时）
+    // 下发 LUT/增强状态到当前 impl（脏标记或 impl 刚重建时）
     {
         std::lock_guard<std::mutex> lk(lutMtx_);
-        if ((lutDirty_ || implRecreated_) && rendererImp_) {
-            rendererImp_->updateLut(
-                    (lutEnabled_ && !lutData_.empty()) ? lutData_.data() : nullptr,
-                    lutIntensity_, lutEnabled_);
-            lutDirty_ = false;
+        if (rendererImp_) {
+            if (lutDirty_ || implRecreated_) {
+                rendererImp_->updateLut(
+                        (lutEnabled_ && !lutData_.empty()) ? lutData_.data() : nullptr,
+                        lutIntensity_, lutEnabled_);
+                lutDirty_ = false;
+            }
+            if (enhanceDirty_ || implRecreated_) {
+                rendererImp_->updateEnhance(enhanceSharpness_, enhanceDeband_);
+                enhanceDirty_ = false;
+            }
             implRecreated_ = false;
         }
     }
@@ -97,6 +103,13 @@ void SkyEGL2Renderer::clearLut() {
     std::lock_guard<std::mutex> lk(lutMtx_);
     lutEnabled_ = false;
     lutDirty_ = true;
+}
+
+void SkyEGL2Renderer::setEnhance(float sharpness, float deband) {
+    std::lock_guard<std::mutex> lk(lutMtx_);
+    enhanceSharpness_ = sharpness;
+    enhanceDeband_ = deband;
+    enhanceDirty_ = true;
 }
 
 EGLBoolean SkyEGL2Renderer::makeCurrent(EGLNativeWindowType window) {
@@ -422,9 +435,12 @@ void SkyEGL2RendererImp::init() {
     av2_texcoord = glGetAttribLocation(program, "av2_Texcoord");     skyElg2CheckError("glGetAttribLocation(av2_Texcoord)");
     um4_mvp = glGetUniformLocation(program, "um4_ModelViewProjection");     skyElg2CheckError("glGetUniformLocation(um4_ModelViewProjection)");
 
-    // LUT uniform（所有片段着色器同名；若被优化掉返回 -1，glUniform 对 -1 为 no-op）
+    // LUT/增强 uniform（所有片段着色器同名；若被优化掉返回 -1，glUniform 对 -1 为 no-op）
     us2_sampler_lut_ = glGetUniformLocation(program, "us2_SamplerLUT");
     u_lut_enabled_   = glGetUniformLocation(program, "u_LutEnabled");
+    u_sharpness_     = glGetUniformLocation(program, "u_Sharpness");
+    u_deband_        = glGetUniformLocation(program, "u_Deband");
+    u_texel_size_    = glGetUniformLocation(program, "u_TexelSize");
 
     return;
 
@@ -525,7 +541,7 @@ EGLBoolean SkyEGL2RendererImp::renderImage(AVFrame *avFrame) {
 
     }
 
-    applyLutInRender();
+    applyEffectsInRender(avFrame);
 
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);      skyElg2CheckError("glDrawArrays");
     return GL_TRUE;
@@ -541,7 +557,12 @@ void SkyEGL2RendererImp::updateLut(const uint8_t* rgba, float intensity, bool en
     }
 }
 
-void SkyEGL2RendererImp::applyLutInRender() {
+void SkyEGL2RendererImp::updateEnhance(float sharpness, float deband) {
+    enhance_sharpness_ = sharpness;
+    enhance_deband_ = deband;
+}
+
+void SkyEGL2RendererImp::applyEffectsInRender(const AVFrame* avFrame) {
     // 保存当前 active 纹理单元（= use() 最后设置的单元），LUT 用单元 3，结束后还原，
     // 以免影响下一帧 uploadTexture 依赖的 active 单元状态。
     GLint savedUnit = GL_TEXTURE0;
@@ -569,6 +590,13 @@ void SkyEGL2RendererImp::applyLutInRender() {
         glUniform1i(us2_sampler_lut_, 3);
     }
     glUniform1f(u_lut_enabled_, (lut_enabled_ && lut_texture_ != 0) ? lut_intensity_ : 0.0f);
+
+    // 画质增强 uniform：texel size 按当前帧设置，对 impl 重建/分辨率变化天然鲁棒
+    glUniform1f(u_sharpness_, enhance_sharpness_);
+    glUniform1f(u_deband_, enhance_deband_);
+    if (avFrame && avFrame->width > 0 && avFrame->height > 0) {
+        glUniform2f(u_texel_size_, 1.0f / (float) avFrame->width, 1.0f / (float) avFrame->height);
+    }
 
     glActiveTexture(savedUnit);
 }

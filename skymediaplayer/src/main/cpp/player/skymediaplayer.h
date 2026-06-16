@@ -110,6 +110,12 @@ public:
     void clearLut();
 
     /**
+     * 设置画质增强强度（各 0..1，0=关闭）。
+     * 状态缓存在 handler，Surface/渲染器重建后会自动回灌。
+     */
+    void setEnhance(float sharpness, float deband);
+
+    /**
      * 获取当前 ANativeWindow 指针（用于 Surface 直渲模式）
      * @return ANativeWindow 指针，可能为 nullptr
      */
@@ -127,6 +133,10 @@ private:
     std::vector<uint8_t> lutData_;
     float lutIntensity_ = 1.0f;
     bool  lutEnabled_ = false;
+
+    // 画质增强状态缓存（用于渲染器重建后回灌），0=关闭
+    float enhanceSharpness_ = 0.0f;
+    float enhanceDeband_ = 0.0f;
 };
 
 enum class AudioOutType {
@@ -340,6 +350,9 @@ public:
 
     // 设置 LUT 画质滤镜（512x512 GPUImage lookup，RGBA）；rgba 为 nullptr 表示关闭
     int setLut(const uint8_t* rgba, int len, float intensity);
+
+    // 设置画质增强强度（CAS 锐化/去色带，各 0..1，0=关闭）
+    int setEnhance(float sharpness, float deband);
 
     // 设置渲染后端（必须在 prepareAsync 之前调用）
     void setRendererBackend(RendererBackend backend);

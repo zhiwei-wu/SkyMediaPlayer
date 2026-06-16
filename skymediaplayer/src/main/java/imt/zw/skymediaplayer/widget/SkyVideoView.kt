@@ -560,6 +560,16 @@ class SkyVideoView(context: Context,
     }
 
     /**
+     * 设置画质增强强度（GPU 渲染，单 pass 与 LUT 串联）
+     * @param sharpness  CAS 锐化强度 0..1，0 关闭
+     * @param deband     去色带强度 0..1，0 关闭
+     * @return 0 成功，负值失败
+     */
+    fun setEnhance(sharpness: Float, deband: Float): Int {
+        return (_mediaPlayer as? SkyMediaPlayer)?.setEnhance(sharpness, deband) ?: -1
+    }
+
+    /**
      * 设置字幕文本（供外部调用，如字幕回调）
      * @param text 字幕文本，传 null 或空字符串隐藏字幕
      */
@@ -619,6 +629,13 @@ class SkyVideoView(context: Context,
      */
     fun setQualityIntensity(percent: Int) {
         _playerOverlay?.setQualityIntensity(percent)
+    }
+
+    /**
+     * 设置画质面板增强参数（各 0-100）
+     */
+    fun setEnhanceValues(sharpness: Int, deband: Int) {
+        _playerOverlay?.setEnhanceValues(sharpness, deband)
     }
 
     /**

@@ -149,6 +149,9 @@ class SkyPlayerOverlay @JvmOverloads constructor(
                 override fun onIntensityChanged(percent: Int) {
                     onQualityPanelListener?.onIntensityChanged(percent)
                 }
+                override fun onEnhanceChanged(sharpness: Int, deband: Int) {
+                    onQualityPanelListener?.onEnhanceChanged(sharpness, deband)
+                }
             })
             setOnDismissListener { resetAutoHideTimer() }
         }
@@ -349,6 +352,11 @@ class SkyPlayerOverlay @JvmOverloads constructor(
     /** 设置滤镜强度（0-100） */
     fun setQualityIntensity(percent: Int) {
         qualityPanel.setIntensity(percent)
+    }
+
+    /** 设置画质增强参数（各 0-100） */
+    fun setEnhanceValues(sharpness: Int, deband: Int) {
+        qualityPanel.setEnhanceValues(sharpness, deband)
     }
 
     /** 设置画质面板回调 */

@@ -34,7 +34,11 @@ abstract class SkySlidePanel @JvmOverloads constructor(
 ) : FrameLayout(context, attrs, defStyleAttr) {
 
     private val animDuration = 280L
-    private val panelBg = 0xE6141414.toInt()
+    private val panelBgOpaque = 0xE6141414.toInt()
+    private val panelBgTransparent = 0x00000000           // 透明模式：面板全透明，完全露出背后视频
+    private var transparent = false
+    private fun panelBg() = if (transparent) panelBgTransparent else panelBgOpaque
+    private fun dimColor() = if (transparent) 0x00000000 else 0x66000000
 
     private val dimBackground: View
     private val scrollView: ScrollView
@@ -50,7 +54,7 @@ abstract class SkySlidePanel @JvmOverloads constructor(
 
         dimBackground = View(context).apply {
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
-            setBackgroundColor(0x66000000)
+            setBackgroundColor(dimColor())
             setOnClickListener { dismiss() }
         }
         addView(dimBackground)
@@ -84,7 +88,7 @@ abstract class SkySlidePanel @JvmOverloads constructor(
             }
             panelContainer.minimumHeight = screenH
             panelContainer.background = GradientDrawable().apply {
-                setColor(panelBg)
+                setColor(panelBg())
                 cornerRadii = floatArrayOf(
                     dpToPx(16f), dpToPx(16f), 0f, 0f, 0f, 0f, dpToPx(16f), dpToPx(16f)
                 )
@@ -95,7 +99,7 @@ abstract class SkySlidePanel @JvmOverloads constructor(
             ).apply { gravity = Gravity.BOTTOM }
             panelContainer.minimumHeight = 0
             panelContainer.background = GradientDrawable().apply {
-                setColor(panelBg)
+                setColor(panelBg())
                 cornerRadii = floatArrayOf(
                     dpToPx(16f), dpToPx(16f), dpToPx(16f), dpToPx(16f), 0f, 0f, 0f, 0f
                 )
@@ -177,6 +181,21 @@ abstract class SkySlidePanel @JvmOverloads constructor(
                 }
             })
             start()
+        }
+    }
+
+    /** 面板透明模式：开启后面板背景与遮罩降透明，调节滤镜时可立即看到背后视频效果 */
+    fun setPanelTransparent(on: Boolean) {
+        if (transparent == on) return
+        transparent = on
+        dimBackground.setBackgroundColor(dimColor())
+        panelContainer.background = GradientDrawable().apply {
+            setColor(panelBg())
+            cornerRadii = if (isLandscape) {
+                floatArrayOf(dpToPx(16f), dpToPx(16f), 0f, 0f, 0f, 0f, dpToPx(16f), dpToPx(16f))
+            } else {
+                floatArrayOf(dpToPx(16f), dpToPx(16f), dpToPx(16f), dpToPx(16f), 0f, 0f, 0f, 0f)
+            }
         }
     }
 

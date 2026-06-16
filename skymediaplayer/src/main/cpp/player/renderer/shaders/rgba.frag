@@ -5,11 +5,19 @@ layout(location = 0) out vec4 fragColor;
 
 layout(binding = 0) uniform sampler2D rgbaTexture;
 layout(binding = 3) uniform sampler2D lutTexture;
-layout(push_constant) uniform PushConstants { float lutEnabled; } pc;
+layout(push_constant) uniform PushConstants {
+    float lutEnabled;
+    float sharpness;
+    float deband;
+} pc;
 
-#include "lut.glsl"
+#include "enhance.glsl"
+
+vec3 sampleRGB(vec2 uv) {
+    return texture(rgbaTexture, uv).rgb;
+}
 
 void main() {
-    vec3 rgb = texture(rgbaTexture, vTexCoord).rgb;
-    fragColor = vec4(applyLut(rgb), 1.0);
+    vec2 texel = 1.0 / vec2(textureSize(rgbaTexture, 0));
+    fragColor = vec4(applyEnhance(sampleRGB(vTexCoord), vTexCoord, texel), 1.0);
 }

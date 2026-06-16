@@ -510,7 +510,7 @@ bool SkyVkRenderer::displayImage(EGLNativeWindowType window, AVFrame *frame) {
         }
     }
     
-    // LUT 数据下发（变更时；等设备空闲后重传到常驻纹理，512x512 同尺寸不会重建，descriptor 仍有效）
+    // LUT/增强状态下发（变更时；LUT 等设备空闲后重传到常驻纹理，512x512 同尺寸不会重建，descriptor 仍有效）
     {
         std::lock_guard<std::mutex> lk(lutMtx_);
         if (lutPendingDirty_) {
@@ -520,8 +520,13 @@ bool SkyVkRenderer::displayImage(EGLNativeWindowType window, AVFrame *frame) {
                 uploadTextureData(lutTexture_, lutPending_.data(), lutPending_.size(),
                                   512, 512, 512 * 4, VK_FORMAT_R8G8B8A8_UNORM);
             }
-            lutPushValue_ = lutEnabled_ ? lutIntensity_ : 0.0f;
+            pushValues_[0] = lutEnabled_ ? lutIntensity_ : 0.0f;
             lutPendingDirty_ = false;
+        }
+        if (enhanceDirty_) {
+            pushValues_[1] = enhanceSharpness_;
+            pushValues_[2] = enhanceDeband_;
+            enhanceDirty_ = false;
         }
     }
 
@@ -1039,7 +1044,7 @@ bool SkyVkRenderer::createGraphicsPipeline() {
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     pushConstantRange.offset = 0;
-    pushConstantRange.size = sizeof(float);
+    pushConstantRange.size = 3 * sizeof(float);  // lutEnabled, sharpness, deband
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1274,6 +1279,13 @@ void SkyVkRenderer::clearLut() {
     std::lock_guard<std::mutex> lk(lutMtx_);
     lutEnabled_ = false;
     lutPendingDirty_ = true;
+}
+
+void SkyVkRenderer::setEnhance(float sharpness, float deband) {
+    std::lock_guard<std::mutex> lk(lutMtx_);
+    enhanceSharpness_ = sharpness;
+    enhanceDeband_ = deband;
+    enhanceDirty_ = true;
 }
 
 bool SkyVkRenderer::createDescriptorSets() {
@@ -1714,7 +1726,7 @@ void SkyVkRenderer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t 
 
     // LUT 开关/强度（push constant）
     vkCmdPushConstants(commandBuffer, pipelineLayout_, VK_SHADER_STAGE_FRAGMENT_BIT,
-                       0, sizeof(float), &lutPushValue_);
+                       0, 3 * sizeof(float), pushValues_);
 
     // 设置动态 viewport 和 scissor（跟随 swapchain 尺寸）
     VkViewport viewport{};

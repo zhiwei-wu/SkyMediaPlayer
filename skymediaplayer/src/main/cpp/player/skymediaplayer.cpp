@@ -263,13 +263,14 @@ void SkyVideoOutHandler::setWindow(EGLNativeWindowType window) {
             renderer_ = SkyRenderer::create(rendererBackend_);
         }
 
-        // 渲染器（可能是新建的）回灌已缓存的 LUT 状态
+        // 渲染器（可能是新建的）回灌已缓存的 LUT/增强状态
         if (renderer_) {
             if (lutEnabled_ && !lutData_.empty()) {
                 renderer_->setLut(lutData_.data(), static_cast<int>(lutData_.size()), lutIntensity_);
             } else {
                 renderer_->clearLut();
             }
+            renderer_->setEnhance(enhanceSharpness_, enhanceDeband_);
         }
 
         ALOG_I(TAG, "Window set successfully, renderer ready: %s", renderer_ ? "true" : "false");
@@ -319,6 +320,13 @@ void SkyVideoOutHandler::clearLut() {
     lutEnabled_ = false;
     lutData_.clear();
     if (renderer_) renderer_->clearLut();
+}
+
+void SkyVideoOutHandler::setEnhance(float sharpness, float deband) {
+    std::lock_guard<std::mutex> lock(mtx);
+    enhanceSharpness_ = sharpness;
+    enhanceDeband_ = deband;
+    if (renderer_) renderer_->setEnhance(sharpness, deband);
 }
 
 bool SkyVideoOutHandler::displayImage(AVFrame *frame) {
@@ -805,6 +813,18 @@ int SkyPlayer::setLut(const uint8_t* rgba, int len, float intensity) {
     // 暂停时也立即按新参数重绘当前帧
     if (is) sky_request_video_redraw(is);
     ALOG_I(TAG, "setLut() success, intensity=%.2f", intensity);
+    return 0;
+}
+
+int SkyPlayer::setEnhance(float sharpness, float deband) {
+    std::lock_guard<std::mutex> lock(mtx);
+    auto clamp01 = [](float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); };
+    sharpness = clamp01(sharpness);
+    deband = clamp01(deband);
+    skyVideoOutHandler_.setEnhance(sharpness, deband);
+    // 暂停时也立即按新参数重绘当前帧
+    if (is) sky_request_video_redraw(is);
+    ALOG_I(TAG, "setEnhance() sharpness=%.2f deband=%.2f", sharpness, deband);
     return 0;
 }
 

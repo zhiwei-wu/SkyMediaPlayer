@@ -234,8 +234,8 @@ class SkyPlayerControlView @JvmOverloads constructor(
         }
         rightButtonGroup.addView(subtitleButton)
 
-        // 画质入口按钮（文字「画质」）
-        filterButton = createTextButton("画质").apply {
+        // 滤镜入口按钮（文字「滤镜」）
+        filterButton = createTextButton("滤镜").apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             // 文字按钮用自适应宽度 + 左右内边距，避免两个汉字被裁切
             layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, dpToPx(48))
@@ -245,7 +245,7 @@ class SkyPlayerControlView @JvmOverloads constructor(
                 onFilterButtonClickListener?.onClick(this)
                 Log.d(TAG, "Filter button clicked")
             }
-            contentDescription = "画质"
+            contentDescription = "滤镜"
         }
         rightButtonGroup.addView(filterButton)
 

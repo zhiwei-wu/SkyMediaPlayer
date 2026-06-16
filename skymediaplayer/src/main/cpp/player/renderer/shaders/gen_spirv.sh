@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 把本目录的 GLSL 着色器编译为 SPIR-V，并生成 ../sky_vk_shaders.h（uint32_t 数组）。
-# 依赖 glslc（shaderc）。改完 .vert/.frag/lut.glsl 后运行本脚本即可。
+# 依赖 glslc（shaderc）。改完 .vert/.frag/lut.glsl/enhance.glsl 后运行本脚本即可。
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -19,10 +19,10 @@ emit() { # name file
 {
   echo "#pragma once"
   echo
-  echo "// Auto-generated SPIR-V shader bytecode (LUT-enabled). DO NOT EDIT BY HAND."
+  echo "// Auto-generated SPIR-V shader bytecode (LUT + enhance). DO NOT EDIT BY HAND."
   echo "// Regenerate via renderer/shaders/gen_spirv.sh"
-  echo "// BT.601 limited range YUV -> full range RGB + GPUImage 512x512 LUT"
-  echo "// (LUT sampler at binding=3, enable/intensity via push_constant float lutEnabled)"
+  echo "// BT.601 limited range YUV -> full range RGB + 画质增强(deband/CAS锐化) + GPUImage 512x512 LUT"
+  echo "// (LUT sampler at binding=3; push_constant 3 floats: lutEnabled, sharpness, deband)"
   echo
   echo "// Vertex shader (fullscreen quad)"
   emit vertexShaderSPIRV "$DIR/quad.vert"

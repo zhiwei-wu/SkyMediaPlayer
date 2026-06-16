@@ -9,6 +9,7 @@ import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.SeekBar
+import android.widget.Switch
 import android.widget.TextView
 
 /**
@@ -36,6 +37,8 @@ class SkyQualityPanel @JvmOverloads constructor(
         fun onFilterSelected(item: QualityFilterItem)
         /** 强度调节结束（0-100） */
         fun onIntensityChanged(percent: Int)
+        /** 画质增强参数调节结束（各 0-100，0=关闭） */
+        fun onEnhanceChanged(sharpness: Int, deband: Int)
     }
 
     private lateinit var gridContainer: LinearLayout
@@ -44,6 +47,8 @@ class SkyQualityPanel @JvmOverloads constructor(
     private lateinit var featuredTitle: TextView
     private lateinit var intensitySeekBar: SeekBar
     private lateinit var intensityValue: TextView
+    private lateinit var enhanceSharpnessBar: SeekBar
+    private lateinit var enhanceDebandBar: SeekBar
 
     private var items: List<QualityFilterItem> = emptyList()
     private val cardViews = HashMap<String, LinearLayout>()
@@ -61,6 +66,9 @@ class SkyQualityPanel @JvmOverloads constructor(
             ).apply { topMargin = dpToPx(12) }
         }
         panelContainer.addView(gridContainer)
+        panelContainer.addView(buildEnhanceHeader())
+        enhanceSharpnessBar = addEnhanceRow("锐化", "低码率糊源更清晰（CAS）")
+        enhanceDebandBar = addEnhanceRow("去色带", "平滑渐变处的压缩色带")
     }
 
     private fun buildSectionHeader(): View {
@@ -82,12 +90,24 @@ class SkyQualityPanel @JvmOverloads constructor(
             text = ""
             setTextColor(TEXT_GRAY)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { leftMargin = dpToPx(10) }
+        }
+        row.addView(headerValue)
+        // 面板透明开关：默认关；打开后面板/遮罩透明，调节滤镜时可立即看到背后视频
+        row.addView(TextView(context).apply {
+            text = "面板透明"
+            setTextColor(TEXT_GRAY)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        })
+        row.addView(Switch(context).apply {
+            isChecked = false
+            setOnCheckedChangeListener { _, checked -> setPanelTransparent(checked) }
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { leftMargin = dpToPx(10) }
-        }
-        row.addView(headerValue)
+            ).apply { leftMargin = dpToPx(6) }
+        })
         return row
     }
 
@@ -256,6 +276,106 @@ class SkyQualityPanel @JvmOverloads constructor(
         applyFeaturedStyle(active)
         val name = items.firstOrNull { it.id == selectedId }?.title ?: "无"
         headerValue.text = "当前：$name"
+    }
+
+    private fun buildEnhanceHeader(): View {
+        return TextView(context).apply {
+            text = "画质增强"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dpToPx(18) }
+        }
+    }
+
+    /** 添加一行增强滑杆卡片（标题 + 百分比 + 副标题 + 滑杆），返回滑杆引用 */
+    private fun addEnhanceRow(title: String, subtitle: String): SeekBar {
+        val card = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dpToPx(16), dpToPx(10), dpToPx(16), dpToPx(12))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dpToPx(10) }
+            background = GradientDrawable().apply {
+                cornerRadius = dpToPx(10f)
+                setColor(CARD_BG)
+                setStroke(dpToPx(1), 0x33FFFFFF)
+            }
+        }
+
+        val topRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        topRow.addView(TextView(context).apply {
+            text = title
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        val valueText = TextView(context).apply {
+            text = "0%"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        }
+        topRow.addView(valueText)
+        card.addView(topRow)
+
+        card.addView(TextView(context).apply {
+            text = subtitle
+            setTextColor(TEXT_GRAY)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dpToPx(2) }
+        })
+
+        val bar = SeekBar(context).apply {
+            max = 100
+            progress = 0
+            progressTintList = android.content.res.ColorStateList.valueOf(GOLD)
+            thumbTintList = android.content.res.ColorStateList.valueOf(GOLD)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dpToPx(6) }
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                    valueText.text = "$p%"
+                }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) {
+                    notifyEnhanceChanged()
+                }
+            })
+        }
+        card.addView(bar)
+        panelContainer.addView(card)
+        return bar
+    }
+
+    private fun notifyEnhanceChanged() {
+        listener?.onEnhanceChanged(
+            enhanceSharpnessBar.progress,
+            enhanceDebandBar.progress
+        )
+    }
+
+    /** 设置增强参数（各 0-100），仅更新 UI 不回调 */
+    fun setEnhanceValues(sharpness: Int, deband: Int) {
+        if (!::enhanceSharpnessBar.isInitialized) return
+        enhanceSharpnessBar.progress = sharpness.coerceIn(0, 100)
+        enhanceDebandBar.progress = deband.coerceIn(0, 100)
     }
 
     /** 设置当前选中滤镜 */

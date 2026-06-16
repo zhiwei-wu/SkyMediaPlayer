@@ -142,6 +142,28 @@ class AutoTestActivity : AppCompatActivity() {
     private fun buildTestCases() {
         testCases.clear()
 
+        // Spike A/B 对比用例：external files/spike/ 目录有劣化片源（adb push）时才生成。
+        // 每个片源 × 4 种增强组合，暂停同一帧打 ABTEST_MARKER off/on 标记，宿主据此截图对比。
+        val spikeFiles = getExternalFilesDir("spike")
+            ?.listFiles { f -> f.extension.equals("mp4", ignoreCase = true) }
+            ?.sortedBy { it.name } ?: emptyList()
+        if (spikeFiles.isNotEmpty()) {
+            for (file in spikeFiles) {
+                for (effect in listOf("sharp", "deband", "all")) {
+                    testCases.add(
+                        TestCase(
+                            name = "A/B ${file.nameWithoutExtension} $effect",
+                            decoderMode = 2,
+                            rendererBackend = 0,
+                            videoUrl = file.absolutePath,
+                            category = TestCategory.ENHANCE_ABTEST,
+                            spikeEffect = effect
+                        )
+                    )
+                }
+            }
+        }
+
         // LUT 画质滤镜测试（放最前，便于快速反馈）：软解走渲染器，覆盖 OpenGL ES 与 Vulkan
         testCases.add(
             TestCase(
@@ -169,6 +191,36 @@ class AutoTestActivity : AppCompatActivity() {
                 rendererBackend = 0,
                 videoUrl = ONLINE_VIDEO_HTTPS,
                 category = TestCategory.LUT_PAUSE
+            )
+        )
+
+        // 画质增强（CAS锐化/去色带）测试：软解走渲染器，覆盖 OpenGL ES 与 Vulkan
+        testCases.add(
+            TestCase(
+                name = "增强滤镜 + 软解 + OpenGL ES",
+                decoderMode = 2,
+                rendererBackend = 0,
+                videoUrl = ONLINE_VIDEO_HTTPS,
+                category = TestCategory.ENHANCE_FILTER
+            )
+        )
+        testCases.add(
+            TestCase(
+                name = "增强滤镜 + 软解 + Vulkan",
+                decoderMode = 2,
+                rendererBackend = 1,
+                videoUrl = ONLINE_VIDEO_HTTPS,
+                category = TestCategory.ENHANCE_FILTER
+            )
+        )
+        // 暂停态切换增强应立即重绘当前帧
+        testCases.add(
+            TestCase(
+                name = "增强暂停切换重绘 + 软解 + OpenGL ES",
+                decoderMode = 2,
+                rendererBackend = 0,
+                videoUrl = ONLINE_VIDEO_HTTPS,
+                category = TestCategory.ENHANCE_PAUSE
             )
         )
 
@@ -276,6 +328,9 @@ class AutoTestActivity : AppCompatActivity() {
             TestCategory.AI_SUBTITLE -> executeSubtitleTest(testCase)
             TestCategory.LUT_FILTER -> executeLutTest(testCase)
             TestCategory.LUT_PAUSE -> executeLutPauseTest(testCase)
+            TestCategory.ENHANCE_FILTER -> executeEnhanceTest(testCase)
+            TestCategory.ENHANCE_PAUSE -> executeEnhancePauseTest(testCase)
+            TestCategory.ENHANCE_ABTEST -> executeEnhanceAbTest(testCase)
         }
     }
 
@@ -476,6 +531,251 @@ class AutoTestActivity : AppCompatActivity() {
                 )
             }
         }, LUT_VERIFY_DURATION_MS)
+    }
+
+    /**
+     * 执行画质增强测试
+     * 本地视频软解走渲染器，依次单开各效果 + 越界输入（应被 clamp）+ 全开 + 关闭，
+     * 验证 setEnhance 返回 0 且应用后画面持续推进（shader 未崩溃/无致命错误）。
+     */
+    private fun executeEnhanceTest(testCase: TestCase) {
+        try {
+            releaseCurrentPlayer()
+
+            val localPath = ensureLocalTestVideo()
+            if (localPath == null) {
+                onTestResult(currentTestIndex, TestStatus.FAILED, "本地测试视频准备失败")
+                return
+            }
+
+            testVideoView.setRendererBackend(testCase.rendererBackend)
+            testVideoView.setDecoderMode(testCase.decoderMode)
+            testVideoView.setVideoPath(localPath)
+
+            val idx = currentTestIndex
+            prepareTimeoutRunnable = Runnable {
+                Log.e(TAG, "Enhance test timeout (prepare): ${testCase.name}")
+                onTestResult(idx, TestStatus.FAILED, "准备超时")
+            }
+            handler.postDelayed(prepareTimeoutRunnable!!, PREPARE_TIMEOUT_MS)
+
+            // 等待真正开始渲染（position > 0），再应用增强，避免与起播竞态
+            val poll = object : Runnable {
+                private var checkCount = 0
+                override fun run() {
+                    if (idx != currentTestIndex) return
+                    checkCount++
+                    if (testVideoView.isPlaying() && testVideoView.getCurrentPosition() > 0) {
+                        cancelPrepareTimeout()
+                        Log.i(TAG, "Enhance test playback advancing: ${testCase.name}")
+                        applyEnhanceSequence(idx)
+                    } else if (checkCount > (PREPARE_TIMEOUT_MS / 200).toInt()) {
+                        cancelPrepareTimeout()
+                        onTestResult(idx, TestStatus.FAILED, "播放启动超时(position 未推进)")
+                    } else {
+                        handler.postDelayed(this, 200)
+                    }
+                }
+            }
+            handler.postDelayed(poll, 300)
+        } catch (exception: Exception) {
+            Log.e(TAG, "Enhance test exception: ${testCase.name}", exception)
+            onTestResult(currentTestIndex, TestStatus.FAILED, "异常: ${exception.message}")
+        }
+    }
+
+    private fun applyEnhanceSequence(idx: Int) {
+        val posBefore = testVideoView.getCurrentPosition()
+
+        // 1) 依次单开各效果 + 越界输入（Kotlin 层 coerceIn）+ 全开，均应返回 0
+        val steps = listOf(
+            Pair(1f, 0f),
+            Pair(0f, 1f),
+            Pair(2f, 0.5f),
+            Pair(1f, 1f)
+        )
+        for ((s, d) in steps) {
+            val ret = testVideoView.setEnhance(s, d)
+            if (ret != 0) {
+                onTestResult(idx, TestStatus.FAILED, "setEnhance($s,$d) 失败 code=$ret")
+                return
+            }
+        }
+
+        // 2) 保持全开，等待数秒后验证画面持续推进
+        handler.postDelayed({
+            if (idx != currentTestIndex) return@postDelayed
+            val playing = testVideoView.isPlaying()
+            val posAfter = testVideoView.getCurrentPosition()
+            // 关闭增强恢复
+            testVideoView.setEnhance(0f, 0f)
+
+            if (playing && posAfter > posBefore) {
+                onTestResult(
+                    idx,
+                    TestStatus.PASSED,
+                    "单开×3+越界+全开 OK | 应用后持续渲染 ${formatTime(posBefore)}→${formatTime(posAfter)}"
+                )
+            } else {
+                onTestResult(
+                    idx,
+                    TestStatus.FAILED,
+                    "应用增强后画面停滞: playing=$playing, pos=$posBefore→$posAfter"
+                )
+            }
+        }, LUT_VERIFY_DURATION_MS)
+    }
+
+    /**
+     * 验证「暂停态切换增强立即重绘当前帧」。
+     * 流程同 LUT 暂停用例：起播 → 关增强并暂停(标记A) → 全开增强(标记B) → 验证保持暂停。
+     * 宿主可在两个 ENHPAUSE_MARKER 处各截一张图对比暂停帧变化。
+     */
+    private fun executeEnhancePauseTest(testCase: TestCase) {
+        try {
+            releaseCurrentPlayer()
+            val localPath = ensureLocalTestVideo()
+            if (localPath == null) {
+                onTestResult(currentTestIndex, TestStatus.FAILED, "本地测试视频准备失败")
+                return
+            }
+            testVideoView.setRendererBackend(testCase.rendererBackend)
+            testVideoView.setDecoderMode(testCase.decoderMode)
+            testVideoView.setVideoPath(localPath)
+
+            val idx = currentTestIndex
+            prepareTimeoutRunnable = Runnable {
+                onTestResult(idx, TestStatus.FAILED, "准备超时")
+            }
+            handler.postDelayed(prepareTimeoutRunnable!!, PREPARE_TIMEOUT_MS)
+
+            val poll = object : Runnable {
+                private var checkCount = 0
+                override fun run() {
+                    if (idx != currentTestIndex) return
+                    checkCount++
+                    if (testVideoView.isPlaying() && testVideoView.getCurrentPosition() > 0) {
+                        cancelPrepareTimeout()
+                        runEnhancePauseSequence(idx)
+                    } else if (checkCount > (PREPARE_TIMEOUT_MS / 200).toInt()) {
+                        cancelPrepareTimeout()
+                        onTestResult(idx, TestStatus.FAILED, "播放启动超时(position 未推进)")
+                    } else {
+                        handler.postDelayed(this, 200)
+                    }
+                }
+            }
+            handler.postDelayed(poll, 300)
+        } catch (e: Exception) {
+            onTestResult(currentTestIndex, TestStatus.FAILED, "异常: ${e.message}")
+        }
+    }
+
+    private fun runEnhancePauseSequence(idx: Int) {
+        // 先确保无增强，再暂停 —— 暂停帧应为原始画面
+        testVideoView.setEnhance(0f, 0f)
+        testVideoView.pause()
+        val pausedPos = testVideoView.getCurrentPosition()
+        Log.i(TAG, "ENHPAUSE_MARKER off paused pos=$pausedPos")  // ← 截图点 A（无增强暂停帧）
+
+        handler.postDelayed({
+            if (idx != currentTestIndex) return@postDelayed
+            Log.i(TAG, "ENHPAUSE_MARKER applying")
+            val ret = testVideoView.setEnhance(1f, 1f)
+            // 应用后仍处于暂停；若重绘逻辑生效，画面会立刻变化（锐化+去色带全开）
+
+            handler.postDelayed({
+                if (idx != currentTestIndex) return@postDelayed
+                val playing = testVideoView.isPlaying()
+                val pos2 = testVideoView.getCurrentPosition()
+                Log.i(TAG, "ENHPAUSE_MARKER applied playing=$playing pos=$pausedPos->$pos2 setEnhance=$ret")  // ← 截图点 B（全开增强暂停帧）
+                testVideoView.setEnhance(0f, 0f)
+
+                val stayedPaused = !playing && kotlin.math.abs(pos2 - pausedPos) < 500
+                if (ret == 0 && stayedPaused) {
+                    onTestResult(idx, TestStatus.PASSED, "暂停态切增强: 保持暂停并已请求重绘 (pos $pausedPos→$pos2)")
+                } else {
+                    onTestResult(idx, TestStatus.FAILED, "暂停态异常: setEnhance=$ret playing=$playing pos=$pausedPos→$pos2")
+                }
+            }, 2500)
+        }, 2500)
+    }
+
+    /**
+     * Spike A/B 对比用例：播放劣化片源到固定位置后暂停，
+     * 在「无增强 / 应用增强」两个时刻打 ABTEST_MARKER 标记，宿主据此各截一张图。
+     * 同一暂停帧逐像素可比（噪声为静态），用于"增强效果肉眼可见"结论材料。
+     */
+    private fun executeEnhanceAbTest(testCase: TestCase) {
+        try {
+            releaseCurrentPlayer()
+            testVideoView.setRendererBackend(testCase.rendererBackend)
+            testVideoView.setDecoderMode(testCase.decoderMode)
+            testVideoView.setVideoPath(testCase.videoUrl)
+
+            val idx = currentTestIndex
+            prepareTimeoutRunnable = Runnable {
+                onTestResult(idx, TestStatus.FAILED, "准备超时")
+            }
+            handler.postDelayed(prepareTimeoutRunnable!!, PREPARE_TIMEOUT_MS)
+
+            // 播放推进到固定位置（3s）再暂停，保证各组合在相近帧上对比
+            val poll = object : Runnable {
+                private var checkCount = 0
+                override fun run() {
+                    if (idx != currentTestIndex) return
+                    checkCount++
+                    if (testVideoView.isPlaying() && testVideoView.getCurrentPosition() >= 3000) {
+                        cancelPrepareTimeout()
+                        runEnhanceAbSequence(testCase, idx)
+                    } else if (checkCount > (PREPARE_TIMEOUT_MS / 200).toInt()) {
+                        cancelPrepareTimeout()
+                        onTestResult(idx, TestStatus.FAILED, "播放推进超时")
+                    } else {
+                        handler.postDelayed(this, 200)
+                    }
+                }
+            }
+            handler.postDelayed(poll, 300)
+        } catch (e: Exception) {
+            onTestResult(currentTestIndex, TestStatus.FAILED, "异常: ${e.message}")
+        }
+    }
+
+    private fun runEnhanceAbSequence(testCase: TestCase, idx: Int) {
+        val tag = testCase.name.removePrefix("A/B ").replace(' ', '_')
+        val enhance = when (testCase.spikeEffect) {
+            "sharp" -> Pair(1f, 0f)
+            "deband" -> Pair(0f, 1f)
+            else -> Pair(1f, 1f)
+        }
+
+        testVideoView.setEnhance(0f, 0f)
+        testVideoView.pause()
+
+        // 暂停帧渲染稳定后打 off 标记（宿主截图 A），再应用增强打 on 标记（宿主截图 B）
+        handler.postDelayed({
+            if (idx != currentTestIndex) return@postDelayed
+            Log.i(TAG, "ABTEST_MARKER $tag off pos=${testVideoView.getCurrentPosition()}")
+            handler.postDelayed({
+                if (idx != currentTestIndex) return@postDelayed
+                val (s, d) = enhance
+                val ret = testVideoView.setEnhance(s, d)
+                handler.postDelayed({
+                    if (idx != currentTestIndex) return@postDelayed
+                    Log.i(TAG, "ABTEST_MARKER $tag on setEnhance=$ret")
+                    handler.postDelayed({
+                        if (idx != currentTestIndex) return@postDelayed
+                        testVideoView.setEnhance(0f, 0f)
+                        if (ret == 0) {
+                            onTestResult(idx, TestStatus.PASSED, "A/B 标记完成 ($tag)")
+                        } else {
+                            onTestResult(idx, TestStatus.FAILED, "setEnhance=$ret")
+                        }
+                    }, 2500)
+                }, 1000)
+            }, 2500)
+        }, 500)
     }
 
     /**
@@ -985,7 +1285,10 @@ class AutoTestActivity : AppCompatActivity() {
         DECODE_RENDER,
         AI_SUBTITLE,
         LUT_FILTER,
-        LUT_PAUSE
+        LUT_PAUSE,
+        ENHANCE_FILTER,
+        ENHANCE_PAUSE,
+        ENHANCE_ABTEST
     }
 
     enum class TestStatus {
@@ -1007,6 +1310,7 @@ class AutoTestActivity : AppCompatActivity() {
         val videoUrl: String,
         val category: TestCategory,
         var status: TestStatus = TestStatus.PENDING,
-        var detail: String = ""
+        var detail: String = "",
+        val spikeEffect: String = ""   // ENHANCE_ABTEST 专用：sharp/deband/all
     )
 }

@@ -307,6 +307,8 @@ class SkyMediaPlayer() : IMediaPlayer {
     @Keep
     private external fun _setLut(rgba: ByteArray?, intensity: Float): Int
     @Keep
+    private external fun _setEnhance(sharpness: Float, deband: Float): Int
+    @Keep
     private external fun _setWhisperPrebufferMode(enabled: Boolean): Boolean
     @Keep
     private external fun _setRendererBackend(backend: Int)
@@ -665,6 +667,20 @@ class SkyMediaPlayer() : IMediaPlayer {
     fun setLut(rgba: ByteArray?, intensity: Float = 1.0f): Int {
         Log.i(TAG, "setLut: ${if (rgba == null) "(none)" else "${rgba.size} bytes, intensity=$intensity"}")
         return _setLut(rgba, intensity)
+    }
+
+    /**
+     * 设置画质增强强度（GPU 渲染，单 pass 与 LUT 串联）
+     * @param sharpness  CAS 锐化强度 0..1，0 关闭
+     * @param deband     去色带强度 0..1，0 关闭
+     * @return 0 成功，负值失败
+     */
+    fun setEnhance(sharpness: Float, deband: Float): Int {
+        Log.i(TAG, "setEnhance: sharpness=$sharpness deband=$deband")
+        return _setEnhance(
+            sharpness.coerceIn(0f, 1f),
+            deband.coerceIn(0f, 1f)
+        )
     }
 
     /**

@@ -23,6 +23,9 @@ constexpr int INVALID_PROGRAM = 0;
 #define GLES_STRINGIZE2(x)  GLES_STRINGIZE(x)
 #define GLES_STRING(x)      GLES_STRINGIZE2(x)
 
+// 画质增强共享 GLSL 片段，依赖上面的 GLES_STRING，必须在其后包含
+#include "sky_enhance_glsl.h"
+
 void skyElg2CheckError(const char* op);
 
 constexpr static const char YUV_VERTEX_SHADER_DEFAULT[] = GLES_STRING(
@@ -75,6 +78,13 @@ public:
      */
     void updateLut(const uint8_t* rgba, float intensity, bool enabled);
 
+    /**
+     * 更新当前 impl 的画质增强强度（在 GL 线程调用）
+     * @param sharpness  CAS 锐化强度 0..1
+     * @param deband     去色带强度 0..1
+     */
+    void updateEnhance(float sharpness, float deband);
+
 public:
     AVPixelFormat avPixFormat = AV_PIX_FMT_NONE;
 
@@ -113,8 +123,15 @@ protected:
     std::vector<uint8_t> lut_pending_;   // 512*512*4，待上传
     bool   lut_pending_dirty_ = false;
 
-    // 在 renderImage() 内绑定 LUT 纹理并设置 uniform（保存/恢复 active 纹理单元）
-    void applyLutInRender();
+    // 画质增强（CAS 锐化/去色带）状态，0=关闭
+    GLint  u_sharpness_ = -1;
+    GLint  u_deband_ = -1;
+    GLint  u_texel_size_ = -1;
+    float  enhance_sharpness_ = 0.0f;
+    float  enhance_deband_ = 0.0f;
+
+    // 在 renderImage() 内绑定 LUT 纹理并设置 LUT/增强 uniform（保存/恢复 active 纹理单元）
+    void applyEffectsInRender(const AVFrame* avFrame);
     // 释放 LUT 纹理（在 reset() 中调用，需 GL 上下文 current）
     void releaseLutTexture();
 };
@@ -137,6 +154,13 @@ public:
     virtual void clearLut() {}
 
     /**
+     * 设置画质增强强度（各 0..1，0=关闭，全 0 等效关闭）。线程安全，可播放中调用。
+     * @param sharpness  CAS 锐化
+     * @param deband     去色带
+     */
+    virtual void setEnhance(float sharpness, float deband) {}
+
+    /**
      * 工厂方法：根据渲染后端类型创建对应的渲染器实例
      * @param backend 渲染后端类型
      * @return 渲染器实例，Vulkan/Metal 暂未实现时回退到 OpenGL ES
@@ -154,6 +178,7 @@ public:
 
     void setLut(const uint8_t* rgba, int len, float intensity) override;
     void clearLut() override;
+    void setEnhance(float sharpness, float deband) override;
 
 private:
     EGLBoolean setup();
@@ -174,6 +199,11 @@ private:
     bool  lutEnabled_ = false;
     bool  lutDirty_ = false;
     bool  implRecreated_ = false;
+
+    // 画质增强状态（与 LUT 同模式，复用 lutMtx_）
+    float enhanceSharpness_ = 0.0f;
+    float enhanceDeband_ = 0.0f;
+    bool  enhanceDirty_ = false;
 
     EGLNativeWindowType window_;
     EGLDisplay display_;

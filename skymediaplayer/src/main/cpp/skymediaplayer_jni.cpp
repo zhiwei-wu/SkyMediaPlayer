@@ -362,6 +362,16 @@ jint sky_mediaPlayer_setLut(JNIEnv *env, jobject thiz, jbyteArray rgba, jfloat i
     return result;
 }
 
+jint sky_mediaPlayer_setEnhance(JNIEnv *env, jobject thiz, jfloat sharpness, jfloat deband) {
+    auto* player = asSkyPlayer(env, thiz);
+    if (nullptr == player) {
+        ALOG_E(TAG, "setEnhance: player is null");
+        return -1;
+    }
+
+    return player->setEnhance(sharpness, deband);
+}
+
 void sky_mediaPlayer_setRendererBackend(JNIEnv *env, jobject thiz, jint backend) {
     auto* player = asSkyPlayer(env, thiz);
     if (nullptr == player) {
@@ -418,6 +428,7 @@ static JNINativeMethod methods[] = {
         {"_release", "()V", (void *) sky_mediaPlayer_release},
         {"_setAudioFilter", "(Ljava/lang/String;)I", (void *) sky_mediaPlayer_setAudioFilter},
         {"_setLut", "([BF)I", (void *) sky_mediaPlayer_setLut},
+        {"_setEnhance", "(FF)I", (void *) sky_mediaPlayer_setEnhance},
         {"_setWhisperPrebufferMode", "(Z)Z", (void *) sky_mediaPlayer_setWhisperPrebufferMode},
         {"_setRendererBackend", "(I)V", (void *) sky_mediaPlayer_setRendererBackend},
         {"_setDecoderMode", "(I)V", (void *) sky_mediaPlayer_setDecoderMode},

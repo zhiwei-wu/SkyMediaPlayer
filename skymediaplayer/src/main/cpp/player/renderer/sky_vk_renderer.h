@@ -26,6 +26,7 @@ public:
 
     void setLut(const uint8_t* rgba, int len, float intensity) override;
     void clearLut() override;
+    void setEnhance(float sharpness, float deband) override;
 
 private:
     // Vulkan 核心对象
@@ -93,7 +94,15 @@ private:
     bool  lutPendingDirty_ = false;
     bool  lutEnabled_ = false;
     float lutIntensity_ = 1.0f;
-    float lutPushValue_ = 0.0f;         // = enabled ? intensity : 0，每帧推送
+
+    // 画质增强（CAS 锐化/去色带）强度，0=关闭（lutMtx_ 保护）
+    float enhanceSharpness_ = 0.0f;
+    float enhanceDeband_ = 0.0f;
+    bool  enhanceDirty_ = false;
+
+    // 每帧推送的 push constant 值（与 shader 的 pc 块对应）：
+    // [0]=lutEnabled(=enabled?intensity:0) [1]=sharpness [2]=deband
+    float pushValues_[3] = {0.0f, 0.0f, 0.0f};
     
     // 状态追踪
     EGLNativeWindowType currentWindow_ = nullptr;

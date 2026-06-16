@@ -5,45 +5,29 @@
 
 class SkyEGL2RendererNV12Imp : public SkyEGL2RendererImp {
 public:
-    constexpr static const char NV12_FRAGMENT_SHADER[] = GLES_STRING(
+    constexpr static const char NV12_FRAGMENT_SHADER[] =
+            GLES_STRING(
             precision highp float;
             varying   highp vec2 vv2_Texcoord;
             uniform         mat3 um3_ColorConversion;
             uniform   lowp  sampler2D us2_SamplerY;  // Y plane
             uniform   lowp  sampler2D us2_SamplerUV; // UV interleaved plane
-            uniform         sampler2D us2_SamplerLUT;  // 512x512 GPUImage lookup
-            uniform         float     u_LutEnabled;    // 0.0=off, else intensity
+            )
+            SKY_ENHANCE_GLSL
+            GLES_STRING(
+            // NV12: Y plane + interleaved UV plane
+            vec3 sampleRGB(highp vec2 uv)
+            {
+                mediump vec3 yuv;
+                yuv.x = (texture2D(us2_SamplerY, uv).r - (16.0 / 255.0));
+                yuv.y = (texture2D(us2_SamplerUV, uv).r - 0.5);  // U (luminance)
+                yuv.z = (texture2D(us2_SamplerUV, uv).a - 0.5);  // V (alpha)
+                return clamp(um3_ColorConversion * yuv, 0.0, 1.0);
+            }
 
             void main()
             {
-                mediump vec3 yuv;
-                lowp    vec3 rgb;
-
-                // NV12: Y plane + interleaved UV plane
-                yuv.x = (texture2D(us2_SamplerY, vv2_Texcoord).r - (16.0 / 255.0));
-                yuv.y = (texture2D(us2_SamplerUV, vv2_Texcoord).r - 0.5);  // U (luminance)
-                yuv.z = (texture2D(us2_SamplerUV, vv2_Texcoord).a - 0.5);  // V (alpha)
-                rgb = um3_ColorConversion * yuv;
-
-                if (u_LutEnabled > 0.001) {
-                    highp float blueColor = clamp(rgb.b, 0.0, 1.0) * 63.0;
-                    highp vec2 quad1;
-                    quad1.y = floor(floor(blueColor) / 8.0);
-                    quad1.x = floor(blueColor) - (quad1.y * 8.0);
-                    highp vec2 quad2;
-                    quad2.y = floor(ceil(blueColor) / 8.0);
-                    quad2.x = ceil(blueColor) - (quad2.y * 8.0);
-                    highp vec2 t1;
-                    t1.x = (quad1.x * 0.125) + 0.5/512.0 + ((0.125 - 1.0/512.0) * clamp(rgb.r, 0.0, 1.0));
-                    t1.y = (quad1.y * 0.125) + 0.5/512.0 + ((0.125 - 1.0/512.0) * clamp(rgb.g, 0.0, 1.0));
-                    highp vec2 t2;
-                    t2.x = (quad2.x * 0.125) + 0.5/512.0 + ((0.125 - 1.0/512.0) * clamp(rgb.r, 0.0, 1.0));
-                    t2.y = (quad2.y * 0.125) + 0.5/512.0 + ((0.125 - 1.0/512.0) * clamp(rgb.g, 0.0, 1.0));
-                    lowp vec3 nc = mix(texture2D(us2_SamplerLUT, t1).rgb,
-                                       texture2D(us2_SamplerLUT, t2).rgb, fract(blueColor));
-                    rgb = mix(rgb, nc, u_LutEnabled);
-                }
-                gl_FragColor = vec4(rgb, 1.0);
+                gl_FragColor = vec4(applyEnhance(sampleRGB(vv2_Texcoord), vv2_Texcoord), 1.0);
             }
     );
 

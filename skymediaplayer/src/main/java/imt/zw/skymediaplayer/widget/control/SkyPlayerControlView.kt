@@ -13,6 +13,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
+import imt.zw.jxmediaplayer.R
 
 /**
  * 底部播控栏组件
@@ -249,8 +250,10 @@ class SkyPlayerControlView @JvmOverloads constructor(
         }
         rightButtonGroup.addView(filterButton)
 
-        // 横竖屏旋转按钮
-        rotateButton = createTextButton("↻").apply {
+        // 横竖屏旋转按钮（竖/横两矩形左下对齐，直观表达横竖屏切换）
+        rotateButton = createTextButton("").apply {
+            foreground = context.getDrawable(R.drawable.ic_orientation)
+            foregroundGravity = Gravity.CENTER
             setOnClickListener {
                 onUserInteraction()
                 onRotateButtonClickListener?.onClick(this)

@@ -660,6 +660,13 @@ class SkyVideoView(context: Context,
     }
 
     /**
+     * 设置顶部栏返回按钮点击监听器
+     */
+    fun setOnBackButtonClickListener(listener: android.view.View.OnClickListener?) {
+        _playerOverlay?.setOnBackButtonClickListener(listener)
+    }
+
+    /**
      * 获取当前渲染后端值
      */
     fun getRendererBackend(): Int = _rendererBackend

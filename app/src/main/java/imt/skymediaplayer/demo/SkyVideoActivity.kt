@@ -116,6 +116,9 @@ class SkyVideoActivity : AppCompatActivity() {
         // 设置旋转按钮监听
         setupRotateButton()
 
+        // 设置顶部栏返回按钮监听（点击返回上一级）
+        mSkyVideoView.setOnBackButtonClickListener { finish() }
+
         // 设置调试信息按钮监听
         setupDebugButton()
 

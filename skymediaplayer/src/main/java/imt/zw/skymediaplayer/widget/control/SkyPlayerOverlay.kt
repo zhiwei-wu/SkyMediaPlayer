@@ -34,6 +34,7 @@ class SkyPlayerOverlay @JvmOverloads constructor(
 
     // UI 组件
     private lateinit var subtitleTextView: TextView
+    private lateinit var topBarView: SkyPlayerTopBar
     private lateinit var controlView: SkyPlayerControlView
     private lateinit var settingsPanel: SkySubtitleSettingsPanel
     private lateinit var qualityPanel: SkyQualityPanel
@@ -50,6 +51,7 @@ class SkyPlayerOverlay @JvmOverloads constructor(
     private var onSubtitleSettingsChangeListener: OnSubtitleSettingsChangeListener? = null
     private var onRotateButtonClickListener: View.OnClickListener? = null
     private var onDebugButtonClickListener: View.OnClickListener? = null
+    private var onBackButtonClickListener: View.OnClickListener? = null
     private var onQualityPanelListener: SkyQualityPanel.OnQualityPanelListener? = null
 
     init {
@@ -118,6 +120,21 @@ class SkyPlayerOverlay @JvmOverloads constructor(
             }
         }
         addView(controlView)
+
+        // 顶部栏（返回 + 标题），显示/隐藏与底部播控栏同步
+        topBarView = SkyPlayerTopBar(context).apply {
+            layoutParams = LayoutParams(
+                LayoutParams.MATCH_PARENT,
+                LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP
+            }
+            visibility = GONE
+            setOnBackButtonClickListener {
+                onBackButtonClickListener?.onClick(it)
+            }
+        }
+        addView(topBarView)
 
         // 字幕设置面板（最顶层）
         settingsPanel = SkySubtitleSettingsPanel(context).apply {
@@ -218,6 +235,7 @@ class SkyPlayerOverlay @JvmOverloads constructor(
 
         isControlVisible = true
         controlView.visibility = VISIBLE
+        topBarView.visibility = VISIBLE
         controlView.startProgressUpdate()
 
         // 启动自动隐藏定时器
@@ -234,6 +252,7 @@ class SkyPlayerOverlay @JvmOverloads constructor(
 
         isControlVisible = false
         controlView.visibility = GONE
+        topBarView.visibility = GONE
         controlView.stopProgressUpdate()
 
         // 取消自动隐藏定时器
@@ -376,6 +395,13 @@ class SkyPlayerOverlay @JvmOverloads constructor(
      */
     fun setOnDebugButtonClickListener(listener: View.OnClickListener?) {
         this.onDebugButtonClickListener = listener
+    }
+
+    /**
+     * 设置顶部栏返回按钮点击监听器
+     */
+    fun setOnBackButtonClickListener(listener: View.OnClickListener?) {
+        this.onBackButtonClickListener = listener
     }
 
     /**

@@ -9,17 +9,13 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- ========== 网络权限结束 ========== -->
 
-    <!-- Android 12及以下使用READ_EXTERNAL_STORAGE -->
+    <!-- 视频读取：原始路径直开需存储权限 -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
-    <!-- Android 13+使用细分权限 -->
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
-    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-
-    <!-- 管理全部文件权限 (Android 11+) -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
+
     <application
         android:name=".SkyPlayerApplication"
         android:allowBackup="true"
@@ -38,13 +34,10 @@
             android:theme="@style/Theme.MyPlayer.Fullscreen" />
         <activity
             android:name=".SkyVideoActivity"
-            android:exported="false"
-            android:configChanges="orientation|keyboardHidden|screenSize"
-            android:theme="@style/Theme.MyPlayer.Fullscreen" />
-        <activity
-            android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.MyPlayer.Home">
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|keyboardHidden|screenSize"
+            android:theme="@style/Theme.MyPlayer.Fullscreen">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 

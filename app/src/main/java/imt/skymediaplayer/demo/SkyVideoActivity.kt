@@ -1,6 +1,7 @@
 package imt.skymediaplayer.demo
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.net.Uri
@@ -11,10 +12,16 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.widget.Button
+import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.ProgressBar
+import android.widget.RadioGroup
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
@@ -53,7 +60,52 @@ class SkyVideoActivity : AppCompatActivity() {
     private var currentEnhanceDeband: Int = 0
 
     private lateinit var mSkyVideoView: SkyVideoView
+    private lateinit var emptyMenu: LinearLayout
+    private lateinit var topMenu: LinearLayout
+    private var hasVideoSource = false
+    // 打开 SAF 前保存的方向，返回后恢复
+    private var orientationBeforePicker: Int = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+    private var wasPlayingBeforePicker = false
+    private var currentSource: String? = null
     private var wasPlayingBeforePause = false
+
+    // 本地文件选择：OpenDocument 持久化授权，最近播放重启后仍可读
+    private val localPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        // 从 SAF 返回：恢复进入前的视频方向
+        requestedOrientation = orientationBeforePicker
+        // 未选 或 选了相同视频：恢复播放原视频
+        if (uri == null || uri.toString() == currentSource) {
+            if (wasPlayingBeforePicker) mSkyVideoView.start()
+            return@registerForActivityResult
+        }
+        try {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (e: SecurityException) {
+            Log.w(TAG, "takePersistableUriPermission failed: ${e.message}")
+        }
+        RecentPlayPreferences.add(this, uri.toString(), queryDisplayName(uri), RecentPlayPreferences.TYPE_LOCAL)
+        // 方向恢复会重建 Surface，延后到 Surface 就绪再起播，避免新片不开
+        mSkyVideoView.post { playUri(uri) }
+    }
+
+    // 选择画质滤镜文件（512x512 PNG），拷贝到 app 私有目录并持久化路径
+    private val lutPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri == null) return@registerForActivityResult
+        try {
+            val dst = java.io.File(filesDir, "lut_default.png")
+            contentResolver.openInputStream(uri)?.use { input ->
+                dst.outputStream().use { output -> input.copyTo(output) }
+            }
+            FilterPreferences.setFilterFilePath(this, dst.absolutePath)
+            Toast.makeText(this, "已设置滤镜文件，播放器选「默认」即可应用", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "保存滤镜文件失败：${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     // 预缓冲 UI 组件
     private var prebufferOverlay: FrameLayout? = null
@@ -95,6 +147,16 @@ class SkyVideoActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // 自动化测试模式：编译选项控制，启用时直接跳转到测试页面
+        val skipAutoTest = intent.getBooleanExtra("skip_auto_test", false)
+        if (BuildConfig.AUTO_TEST_ENABLED && !skipAutoTest) {
+            val testIntent = Intent(this, AutoTestActivity::class.java)
+            testIntent.putExtra("auto_start", true)
+            startActivity(testIntent)
+            finish()
+            return
+        }
+
         // 设置全沉浸式全屏
         setupFullscreenMode()
 
@@ -103,20 +165,34 @@ class SkyVideoActivity : AppCompatActivity() {
         // 初始化视频播放器
         mSkyVideoView = findViewById(R.id.sky_video_view)
 
-        // 设置渲染后端
-        val rendererBackend = intent.getIntExtra(MainActivity.EXTRA_RENDERER_BACKEND, 0)
+        // 渲染后端 + 解码模式从持久化设置读取（不再经配置页 Intent 传入）
+        val rendererBackend = RendererPreferences.getRendererBackend(this)
         mSkyVideoView.setRendererBackend(rendererBackend)
         Log.i(TAG, "Using renderer backend: $rendererBackend")
 
-        // 设置解码模式
-        val decoderMode = intent.getIntExtra(MainActivity.EXTRA_DECODER_MODE, 3)
+        val decoderMode = DecoderPreferences.getDecoderMode(this)
         mSkyVideoView.setDecoderMode(decoderMode)
         Log.i(TAG, "Using decoder mode: $decoderMode")
+
+        // 空态选片菜单（首次进入居中）
+        emptyMenu = findViewById(R.id.empty_menu)
+        findViewById<Button>(R.id.btn_pick_local).setOnClickListener { openLocalPicker() }
+        findViewById<Button>(R.id.btn_pick_url).setOnClickListener { showUrlInputDialog() }
+
+        // 起播后顶部切换菜单（跟随播控显隐）
+        topMenu = findViewById(R.id.top_menu)
+        findViewById<Button>(R.id.top_local).setOnClickListener { openLocalPicker() }
+        findViewById<Button>(R.id.top_online).setOnClickListener { showUrlInputDialog() }
+        findViewById<Button>(R.id.top_recent).setOnClickListener { showRecentDialog() }
+        findViewById<Button>(R.id.top_settings).setOnClickListener { showRenderSettingsDialog() }
+        mSkyVideoView.setOnControlVisibilityChangeListener { visible ->
+            topMenu.visibility = if (visible && hasVideoSource) View.VISIBLE else View.GONE
+        }
 
         // 设置旋转按钮监听
         setupRotateButton()
 
-        // 设置顶部栏返回按钮监听（点击返回上一级）
+        // 顶部「退出」按钮：退出播放器
         mSkyVideoView.setOnBackButtonClickListener { finish() }
 
         // 设置调试信息按钮监听
@@ -134,25 +210,209 @@ class SkyVideoActivity : AppCompatActivity() {
         // 创建预缓冲 UI
         createPrebufferUI()
 
-        // 检查是否传递了在线视频 URL
-        val videoUrl = intent.getStringExtra("video_url")
-        if (videoUrl != null) {
-            Log.d(TAG, "Playing online video: $videoUrl")
-            mSkyVideoView.setVideoPath(videoUrl)
-            Toast.makeText(this, "正在连接服务器...", Toast.LENGTH_SHORT).show()
+        // 无视频源：显示空态选片菜单，等待用户选择
+        showEmptyMenu()
+    }
+
+    /** 显示空态选片菜单（无视频时）：本地/在线 + 直接列出最近 3 个 */
+    private fun showEmptyMenu() {
+        hasVideoSource = false
+        topMenu.visibility = View.GONE
+        emptyMenu.visibility = View.VISIBLE
+
+        val container = findViewById<LinearLayout>(R.id.recent_container)
+        container.removeAllViews()
+        val recent = RecentPlayPreferences.getAll(this).take(3)
+        findViewById<TextView>(R.id.recent_label).visibility = if (recent.isEmpty()) View.GONE else View.VISIBLE
+        recent.forEach { item ->
+            container.addView(Button(this).apply {
+                text = item.title
+                setOnClickListener { playRecent(item) }
+            })
+        }
+    }
+
+    /** 打开本地 SAF：方向交给系统，仅记录进入前方向，返回时恢复 */
+    private fun openLocalPicker() {
+        ensureAllFilesAccess()
+        // 离开播放前暂停当前视频，返回未换片时恢复
+        wasPlayingBeforePicker = hasVideoSource && mSkyVideoView.isPlaying()
+        if (wasPlayingBeforePicker) mSkyVideoView.pause()
+        orientationBeforePicker = requestedOrientation
+        localPickerLauncher.launch(arrayOf("video/*"))
+    }
+
+    /** 原始路径直开需「所有文件」权限，未授时引导前往设置 */
+    private fun ensureAllFilesAccess() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R &&
+            !android.os.Environment.isExternalStorageManager()) {
+            Toast.makeText(this, "请开启「所有文件访问」权限以播放本地视频", Toast.LENGTH_LONG).show()
+            startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:$packageName")))
+        }
+    }
+
+    /** 起播本地 content uri */
+    private fun playUri(uri: Uri) {
+        hasVideoSource = true
+        currentSource = uri.toString()
+        emptyMenu.visibility = View.GONE
+        Log.d(TAG, "Playing local video URI: $uri")
+        applyRenderSettings()
+        mSkyVideoView.setVideoURI(uri)  // 备好后由 onPrepared 自动起播
+        reapplyQuality()
+    }
+
+    /** 起播在线 URL */
+    private fun playUrl(url: String) {
+        hasVideoSource = true
+        currentSource = url
+        emptyMenu.visibility = View.GONE
+        Log.d(TAG, "Playing online video: $url")
+        applyRenderSettings()
+        mSkyVideoView.setVideoPath(url)  // 备好后由 onPrepared 自动起播
+        reapplyQuality()
+        Toast.makeText(this, "正在连接服务器...", Toast.LENGTH_SHORT).show()
+    }
+
+    /** 起播新视频前回灌渲染设置：openVideo 重建播放器时即取最新后端/解码，无需退出重进 */
+    private fun applyRenderSettings() {
+        mSkyVideoView.setRendererBackend(RendererPreferences.getRendererBackend(this))
+        mSkyVideoView.setDecoderMode(DecoderPreferences.getDecoderMode(this))
+    }
+
+    /** 切换视频后继承上一次的滤镜/增强设置 */
+    private fun reapplyQuality() {
+        mSkyVideoView.setEnhance(currentEnhanceSharpness / 100f, currentEnhanceDeband / 100f)
+        currentLutRgba?.let { mSkyVideoView.setLut(it, currentLutIntensity / 100f) }
+    }
+
+    /** 起播最近播放项（本地校验持久授权） */
+    private fun playRecent(item: RecentPlayPreferences.Item) {
+        if (item.type == RecentPlayPreferences.TYPE_URL) {
+            playUrl(item.uri)
         } else {
-            val videoUriString = intent.getStringExtra("video_uri")
-            if (videoUriString == null) {
-                Toast.makeText(this, "未选择视频文件", Toast.LENGTH_SHORT).show()
-                finish()
-                return
+            ensureAllFilesAccess()
+            playUri(Uri.parse(item.uri))
+        }
+    }
+
+    /** 输入视频 URL 对话框 */
+    private fun showUrlInputDialog() {
+        val input = EditText(this).apply {
+            hint = "输入视频URL (http:// 或 https://)"
+            inputType = android.text.InputType.TYPE_TEXT_VARIATION_URI
+        }
+        AlertDialog.Builder(this)
+            .setTitle("视频 URL")
+            .setView(input)
+            .setPositiveButton("播放") { _, _ ->
+                val url = input.text.toString().trim()
+                if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                    Toast.makeText(this, "URL必须以 http:// 或 https:// 开头", Toast.LENGTH_SHORT).show()
+                } else {
+                    RecentPlayPreferences.add(this, url, url.substringAfterLast('/'), RecentPlayPreferences.TYPE_URL)
+                    playUrl(url)
+                }
             }
-            val videoUri = Uri.parse(videoUriString)
-            Log.d(TAG, "Playing local video URI: $videoUri")
-            mSkyVideoView.setVideoURI(videoUri)
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 最近播放列表 */
+    private fun showRecentDialog() {
+        val items = RecentPlayPreferences.getAll(this)
+        if (items.isEmpty()) {
+            Toast.makeText(this, "暂无最近播放", Toast.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("最近播放")
+            .setItems(items.map { it.title }.toTypedArray()) { _, which -> playRecent(items[which]) }
+            .show()
+    }
+
+    /** 查询 content uri 的显示名 */
+    private fun queryDisplayName(uri: Uri): String {
+        return try {
+            contentResolver.query(uri, null, null, null, null)?.use { c ->
+                val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
+            } ?: uri.lastPathSegment ?: "本地视频"
+        } catch (e: Exception) {
+            uri.lastPathSegment ?: "本地视频"
+        }
+    }
+
+    /** 统一设置入口（播放/画质）；保存后下次起播生效 */
+    private fun showRenderSettingsDialog() {
+        val currentBackend = RendererPreferences.getRendererBackend(this)
+        val currentDecoder = DecoderPreferences.getDecoderMode(this)
+        val backends = arrayOf("OpenGL ES (默认)", "Vulkan", "Metal (暂不可用)")
+        val decoders = arrayOf("硬解直渲 (Surface)", "硬解Buffer", "软解 (FFmpeg)", "自动 (三级回退)")
+        var selectedBackend = currentBackend
+        var selectedDecoder = currentDecoder
+
+        val d = resources.displayMetrics.density
+        fun dp(v: Int) = (v * d).toInt()
+        val dialogView = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(16), dp(24), dp(8))
+        }
+        // 分区标题：首个无上间距，其余 20dp 拉开分组
+        fun sectionHeader(title: String, first: Boolean = false) {
+            dialogView.addView(TextView(this).apply {
+                text = title; setTypeface(null, android.graphics.Typeface.BOLD)
+                if (!first) layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = dp(20) }
+            })
         }
 
-        mSkyVideoView.start()
+        sectionHeader("渲染后端", first = true)
+        val backendGroup = RadioGroup(this)
+        backends.forEachIndexed { index, name ->
+            backendGroup.addView(android.widget.RadioButton(this).apply {
+                text = name; id = index + 100; isChecked = index == currentBackend; isEnabled = index != 2
+            })
+        }
+        backendGroup.setOnCheckedChangeListener { _, id -> if (id - 100 != 2) selectedBackend = id - 100 }
+        dialogView.addView(backendGroup)
+
+        sectionHeader("解码模式")
+        val decoderGroup = RadioGroup(this)
+        decoders.forEachIndexed { index, name ->
+            decoderGroup.addView(android.widget.RadioButton(this).apply {
+                text = name; id = index + 200; isChecked = index == currentDecoder
+            })
+        }
+        decoderGroup.setOnCheckedChangeListener { _, id -> selectedDecoder = id - 200 }
+        dialogView.addView(decoderGroup)
+
+        sectionHeader("画质滤镜")
+        val lutPath = FilterPreferences.getFilterFilePath(this)
+        dialogView.addView(TextView(this).apply {
+            text = if (lutPath.isNullOrEmpty()) "滤镜文件：未设置" else "滤镜文件：${java.io.File(lutPath).name}"
+        })
+        dialogView.addView(Button(this).apply {
+            text = "选择滤镜文件 (512x512 PNG)"
+            setOnClickListener { lutPickerLauncher.launch("image/*") }
+        })
+
+        val scrollView = android.widget.ScrollView(this).apply { addView(dialogView) }
+        AlertDialog.Builder(this)
+            .setTitle("设置")
+            .setView(scrollView)
+            .setPositiveButton("确定") { _, _ ->
+                RendererPreferences.setRendererBackend(this, selectedBackend)
+                DecoderPreferences.setDecoderMode(this, selectedDecoder)
+                // 立即生效：回灌新配置并原地重开当前片（恢复进度）
+                applyRenderSettings()
+                if (hasVideoSource) mSkyVideoView.reloadCurrent()
+                Toast.makeText(this, "设置已生效", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     /**
@@ -188,6 +448,7 @@ class SkyVideoActivity : AppCompatActivity() {
         mSkyVideoView.setSelectedQualityFilter(FILTER_NONE)
         mSkyVideoView.setQualityIntensity(currentLutIntensity)
         mSkyVideoView.setEnhanceValues(currentEnhanceSharpness, currentEnhanceDeband)
+        mSkyVideoView.setEnhance(currentEnhanceSharpness / 100f, currentEnhanceDeband / 100f)
 
         mSkyVideoView.setOnQualityPanelListener(object : SkyQualityPanel.OnQualityPanelListener {
             override fun onFilterSelected(item: SkyQualityPanel.QualityFilterItem) {
@@ -203,6 +464,9 @@ class SkyVideoActivity : AppCompatActivity() {
                 currentEnhanceDeband = deband
                 mSkyVideoView.setEnhance(sharpness / 100f, deband / 100f)
             }
+            override fun onCompareToggle(enabled: Boolean) {
+                mSkyVideoView.setCompareEnabled(enabled)
+            }
         })
     }
 
@@ -217,7 +481,7 @@ class SkyVideoActivity : AppCompatActivity() {
             FILTER_DEFAULT -> {
                 val path = FilterPreferences.getFilterFilePath(this)
                 if (path.isNullOrEmpty()) {
-                    Toast.makeText(this, "请先在主界面「设置」中选择滤镜文件", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "请先在「渲染设置」中选择滤镜文件", Toast.LENGTH_LONG).show()
                     return
                 }
                 val rgba = LutLoader.fromFile(path)
@@ -696,7 +960,10 @@ class SkyVideoActivity : AppCompatActivity() {
         synchronized(pendingSubtitleQueue) {
             pendingSubtitleQueue.clear()
         }
-        mSkyVideoView.getMediaPlayer()?.setOnSubtitleWithPtsListener(null)
+        // AUTO_TEST 路由会在初始化 view 前 finish，onDestroy 调到此处需防未初始化
+        if (::mSkyVideoView.isInitialized) {
+            mSkyVideoView.getMediaPlayer()?.setOnSubtitleWithPtsListener(null)
+        }
         currentSubtitleText = null
     }
 

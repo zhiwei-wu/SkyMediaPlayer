@@ -2,6 +2,7 @@ package imt.zw.skymediaplayer.widget.control
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
 import android.util.AttributeSet
@@ -30,10 +31,12 @@ class SkyPlayerOverlay @JvmOverloads constructor(
     companion object {
         private const val TAG = "SkyPlayerOverlay"
         private const val AUTO_HIDE_DELAY_MS = 5000L
+        private const val HUD_VISIBLE_MS = 700L
     }
 
     // UI 组件
     private lateinit var subtitleTextView: TextView
+    private lateinit var hudTextView: TextView
     private lateinit var topBarView: SkyPlayerTopBar
     private lateinit var controlView: SkyPlayerControlView
     private lateinit var settingsPanel: SkySubtitleSettingsPanel
@@ -47,12 +50,67 @@ class SkyPlayerOverlay @JvmOverloads constructor(
     private val autoHideHandler = Handler(Looper.getMainLooper())
     private val autoHideRunnable = Runnable { hideControl() }
 
+    // 双击操作提示 HUD 定时器
+    private val hudHandler = Handler(Looper.getMainLooper())
+    private val hudHideRunnable = Runnable {
+        hudTextView.animate().alpha(0f).setDuration(180).withEndAction {
+            hudTextView.visibility = View.GONE
+        }.start()
+    }
+
+    // 双击中央切换播放/暂停，单击切换播控显隐
+    private val gestureDetector = android.view.GestureDetector(context,
+        object : android.view.GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                toggleControlVisibility()
+                return true
+            }
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                val control = playerControl ?: return true
+                val stepSec = SkyPlayerControlView.SEEK_STEP_MS / 1000
+                when {
+                    e.x < width / 4f -> {
+                        seekBy(control, -SkyPlayerControlView.SEEK_STEP_MS)
+                        showHud("⏪  快退 ${stepSec} 秒")
+                    }
+                    e.x > width * 3f / 4f -> {
+                        seekBy(control, SkyPlayerControlView.SEEK_STEP_MS)
+                        showHud("快进 ${stepSec} 秒  ⏩")
+                    }
+                    else -> {
+                        if (control.isPlaying()) { control.pause(); showHud("⏸  已暂停") }
+                        else { control.start(); showHud("▶  播放") }
+                    }
+                }
+                return true
+            }
+        })
+
+    /** 在当前位置基础上前进/后退 deltaMs，并钳制到 [0, duration] */
+    private fun seekBy(control: PlayerControl, deltaMs: Int) {
+        val target = (control.getCurrentPosition() + deltaMs)
+            .coerceIn(0, control.getDuration())
+        control.seekTo(target)
+    }
+
+    /** 顶部居中弹出操作提示，短暂停留后淡出 */
+    private fun showHud(text: String) {
+        hudHandler.removeCallbacks(hudHideRunnable)
+        hudTextView.animate().cancel()
+        hudTextView.text = text
+        hudTextView.alpha = 1f
+        hudTextView.visibility = View.VISIBLE
+        hudHandler.postDelayed(hudHideRunnable, HUD_VISIBLE_MS)
+    }
+
     // 回调
     private var onSubtitleSettingsChangeListener: OnSubtitleSettingsChangeListener? = null
     private var onRotateButtonClickListener: View.OnClickListener? = null
     private var onDebugButtonClickListener: View.OnClickListener? = null
     private var onBackButtonClickListener: View.OnClickListener? = null
     private var onQualityPanelListener: SkyQualityPanel.OnQualityPanelListener? = null
+    private var onControlVisibilityChangeListener: ((Boolean) -> Unit)? = null
 
     init {
         initView()
@@ -83,6 +141,27 @@ class SkyPlayerOverlay @JvmOverloads constructor(
             }
         }
         addView(subtitleTextView)
+
+        // 双击操作提示 HUD（顶部居中的胶囊提示，短暂淡出）
+        hudTextView = TextView(context).apply {
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            gravity = Gravity.CENTER
+            setPadding(dpToPx(20), dpToPx(10), dpToPx(20), dpToPx(10))
+            background = GradientDrawable().apply {
+                cornerRadius = dpToPx(22).toFloat()
+                setColor(0xB3000000.toInt())
+            }
+            visibility = GONE
+            layoutParams = LayoutParams(
+                LayoutParams.WRAP_CONTENT,
+                LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                topMargin = dpToPx(96) // 落在顶部播控栏（约 84dp）下方，避免重叠
+            }
+        }
+        addView(hudTextView)
 
         // 底部播控栏
         controlView = SkyPlayerControlView(context).apply {
@@ -169,6 +248,9 @@ class SkyPlayerOverlay @JvmOverloads constructor(
                 override fun onEnhanceChanged(sharpness: Int, deband: Int) {
                     onQualityPanelListener?.onEnhanceChanged(sharpness, deband)
                 }
+                override fun onCompareToggle(enabled: Boolean) {
+                    onQualityPanelListener?.onCompareToggle(enabled)
+                }
             })
             setOnDismissListener { resetAutoHideTimer() }
         }
@@ -179,17 +261,12 @@ class SkyPlayerOverlay @JvmOverloads constructor(
      * 处理触摸事件
      */
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.action == MotionEvent.ACTION_DOWN) {
-            // 如果设置面板/画质面板正在显示，不处理触摸事件（由面板自己处理）
-            if (settingsPanel.isShowing() || qualityPanel.isShowing()) {
-                return false
-            }
-
-            // 点击空白区域，切换播控显示/隐藏
-            toggleControlVisibility()
-            return true
+        // 设置/画质面板显示时不处理（由面板自己处理）
+        if (settingsPanel.isShowing() || qualityPanel.isShowing()) {
+            return false
         }
-        return super.onTouchEvent(event)
+        // 单击切换播控显隐，双击切换播放/暂停
+        return gestureDetector.onTouchEvent(event)
     }
 
     /**
@@ -236,6 +313,7 @@ class SkyPlayerOverlay @JvmOverloads constructor(
         isControlVisible = true
         controlView.visibility = VISIBLE
         topBarView.visibility = VISIBLE
+        onControlVisibilityChangeListener?.invoke(true)
         controlView.startProgressUpdate()
 
         // 启动自动隐藏定时器
@@ -253,6 +331,7 @@ class SkyPlayerOverlay @JvmOverloads constructor(
         isControlVisible = false
         controlView.visibility = GONE
         topBarView.visibility = GONE
+        onControlVisibilityChangeListener?.invoke(false)
         controlView.stopProgressUpdate()
 
         // 取消自动隐藏定时器
@@ -273,8 +352,8 @@ class SkyPlayerOverlay @JvmOverloads constructor(
      * 显示设置面板
      */
     private fun showSettingsPanel() {
-        // 取消自动隐藏定时器
-        autoHideHandler.removeCallbacks(autoHideRunnable)
+        // 先隐藏播控栏，避免与字幕面板重叠
+        hideControl()
         settingsPanel.show()
     }
 
@@ -404,6 +483,11 @@ class SkyPlayerOverlay @JvmOverloads constructor(
         this.onBackButtonClickListener = listener
     }
 
+    /** 播控显示/隐藏变化回调（用于外部菜单跟随显隐） */
+    fun setOnControlVisibilityChangeListener(listener: ((Boolean) -> Unit)?) {
+        this.onControlVisibilityChangeListener = listener
+    }
+
     /**
      * 播控栏是否正在显示
      */
@@ -419,6 +503,7 @@ class SkyPlayerOverlay @JvmOverloads constructor(
      */
     fun release() {
         autoHideHandler.removeCallbacks(autoHideRunnable)
+        hudHandler.removeCallbacks(hudHideRunnable)
         controlView.stopProgressUpdate()
     }
 

@@ -29,15 +29,15 @@ class SkyPlayerTopBar @JvmOverloads constructor(
         orientation = HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         setBackgroundColor(0xCC000000.toInt())
-        setPadding(dpToPx(8), dpToPx(8), dpToPx(16), dpToPx(8))
+        setPadding(dpToPx(8), dpToPx(28), dpToPx(16), dpToPx(8))
 
         // 返回按钮
         backButton = TextView(context).apply {
-            text = "‹"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
+            text = "退出"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            layoutParams = LayoutParams(dpToPx(48), dpToPx(48))
+            layoutParams = LayoutParams(dpToPx(64), dpToPx(48))
 
             val outValue = TypedValue()
             context.theme.resolveAttribute(
@@ -48,7 +48,7 @@ class SkyPlayerTopBar @JvmOverloads constructor(
             setBackgroundResource(outValue.resourceId)
             isClickable = true
             isFocusable = true
-            contentDescription = "返回"
+            contentDescription = "退出"
 
             setOnClickListener { onBackButtonClickListener?.onClick(it) }
         }

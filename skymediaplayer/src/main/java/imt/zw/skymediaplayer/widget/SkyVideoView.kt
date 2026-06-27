@@ -17,6 +17,7 @@ import imt.zw.skymediaplayer.player.SkyMediaPlayer
 import imt.zw.skymediaplayer.utils.Utils
 import imt.zw.skymediaplayer.widget.control.OnSubtitleSettingsChangeListener
 import imt.zw.skymediaplayer.widget.control.PlayerControl
+import imt.zw.skymediaplayer.widget.control.SkyCompareSlider
 import imt.zw.skymediaplayer.widget.control.SkyPlayerOverlay
 import imt.zw.skymediaplayer.widget.control.SubtitleSettings
 
@@ -35,11 +36,17 @@ class SkyVideoView(context: Context,
     // 播放器交互覆盖层（包含字幕和播控）
     private var _playerOverlay: SkyPlayerOverlay? = null
 
+    // A/B 对比分屏滑动条（默认隐藏，开启对比时显示在最上层）
+    private var _compareSlider: SkyCompareSlider? = null
+
     // 渲染后端配置
     private var _rendererBackend: Int = 0  // 默认 OpenGL ES
 
     // 解码模式配置
     private var _decoderMode: Int = 3  // 默认 AUTO（自动三级回退）
+
+    // 重开同源后待恢复的进度（毫秒），>0 时由 onPrepared 自动 seek，用于切渲染设置即时生效
+    private var _resumePositionMs: Long = 0
 
     // Whisper 字幕状态
     private var _isWhisperEnabled: Boolean = false
@@ -100,6 +107,21 @@ class SkyVideoView(context: Context,
 
         // Layer 2: 交互覆盖层（包含字幕和播控）
         initPlayerOverlay(context)
+
+        // Layer 3: A/B 对比分屏滑动条（默认隐藏，在最上层；远离分隔条的触摸下放给覆盖层）
+        _compareSlider = SkyCompareSlider(context).apply {
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+            visibility = GONE
+            onSplitChanged = { fraction ->
+                (_mediaPlayer as? SkyMediaPlayer)?.setCompare(fraction)
+            }
+        }
+        addView(_compareSlider)
+
+        // 视频区可能居中留黑边，分界条对齐 SurfaceView 实际区域
+        _surfaceRenderView?.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+            _compareSlider?.setContentBounds(v.left.toFloat(), v.width.toFloat())
+        }
     }
 
     /**
@@ -229,6 +251,13 @@ class SkyVideoView(context: Context,
         openVideo();
     }
 
+    /** 以新渲染/解码配置重开当前片并恢复进度（切设置即时生效）。无源时忽略。 */
+    fun reloadCurrent() {
+        if (_localVideoPath == null && _videoUri == null) return
+        _resumePositionMs = getCurrentPosition().toLong()
+        openVideo()
+    }
+
     fun setVideoURI(uri: Uri) {
         // 尝试将 URI 转换为本地路径
         _localVideoPath = Utils.getRealPathFromURI(context, uri)
@@ -337,6 +366,7 @@ class SkyVideoView(context: Context,
 
         if (audioFocusResult == true) {
             _mediaPlayer?.start()
+            _playerOverlay?.updatePlayPauseButton(true)
             Log.d(TAG, "Started playback with audio focus, isPlaying: ${_mediaPlayer?.isPlaying()}")
         } else {
             Log.w(TAG, "Failed to get audio focus, cannot start playback")
@@ -345,6 +375,7 @@ class SkyVideoView(context: Context,
 
     override fun pause() {
         _mediaPlayer?.pause()
+        _playerOverlay?.updatePlayPauseButton(false)
         Log.d(TAG, "Paused playback")
     }
 
@@ -437,6 +468,11 @@ class SkyVideoView(context: Context,
 
             // 目前只支持异步 prepared，所以在这里自动开启播放
             start()
+            // 重开同源（如切渲染设置）后恢复进度
+            if (_resumePositionMs > 0) {
+                seekTo(_resumePositionMs.toInt())
+                _resumePositionMs = 0
+            }
 
             // 显示播控栏
             post {
@@ -570,6 +606,15 @@ class SkyVideoView(context: Context,
     }
 
     /**
+     * 开关 A/B 对比分屏（左原图右滤镜）。开启时显示拖动条，分界默认 50%。
+     */
+    fun setCompareEnabled(enabled: Boolean) {
+        _compareSlider?.visibility = if (enabled) VISIBLE else GONE
+        val split = if (enabled) (_compareSlider?.split ?: 0.5f) else 0f
+        (_mediaPlayer as? SkyMediaPlayer)?.setCompare(split)
+    }
+
+    /**
      * 设置字幕文本（供外部调用，如字幕回调）
      * @param text 字幕文本，传 null 或空字符串隐藏字幕
      */
@@ -664,6 +709,11 @@ class SkyVideoView(context: Context,
      */
     fun setOnBackButtonClickListener(listener: android.view.View.OnClickListener?) {
         _playerOverlay?.setOnBackButtonClickListener(listener)
+    }
+
+    /** 播控显示/隐藏变化回调（顶部自定义菜单跟随显隐） */
+    fun setOnControlVisibilityChangeListener(listener: ((Boolean) -> Unit)?) {
+        _playerOverlay?.setOnControlVisibilityChangeListener(listener)
     }
 
     /**

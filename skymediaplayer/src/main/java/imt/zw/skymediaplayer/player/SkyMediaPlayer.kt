@@ -309,6 +309,8 @@ class SkyMediaPlayer() : IMediaPlayer {
     @Keep
     private external fun _setEnhance(sharpness: Float, deband: Float): Int
     @Keep
+    private external fun _setCompare(split: Float): Int
+    @Keep
     private external fun _setWhisperPrebufferMode(enabled: Boolean): Boolean
     @Keep
     private external fun _setRendererBackend(backend: Int)
@@ -681,6 +683,15 @@ class SkyMediaPlayer() : IMediaPlayer {
             sharpness.coerceIn(0f, 1f),
             deband.coerceIn(0f, 1f)
         )
+    }
+
+    /**
+     * 设置 A/B 对比分界（左原图右滤镜，GPU 渲染）
+     * @param split 归一化分界 x，0..1；0 关闭对比（全画面应用滤镜）
+     * @return 0 成功，负值失败
+     */
+    fun setCompare(split: Float): Int {
+        return _setCompare(split.coerceIn(0f, 1f))
     }
 
     /**

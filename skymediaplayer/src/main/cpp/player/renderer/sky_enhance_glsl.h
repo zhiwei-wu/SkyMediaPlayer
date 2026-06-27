@@ -22,6 +22,7 @@
     uniform       float     u_LutEnabled;     /* 0.0=off, else intensity */        \
     uniform       float     u_Sharpness;      /* CAS 锐化强度 0..1 */               \
     uniform       float     u_Deband;         /* 去色带强度 0..1 */                 \
+    uniform       float     u_Split;          /* A/B 对比分界 x，<=0=全增强 */        \
     uniform highp vec2      u_TexelSize;      /* (1/视频宽, 1/视频高) */            \
                                                                                     \
     vec3 sampleRGB(highp vec2 uv);  /* 各格式 shader 实现 */                        \
@@ -98,6 +99,7 @@
     /* 增强主管线：c0 为原始 sampleRGB(uv)，强度为 0 的效果整体跳过 */                \
     vec3 applyEnhance(vec3 c0, highp vec2 uv)                                       \
     {                                                                               \
+        if (uv.x < u_Split) { return c0; }  /* 对比模式左侧：原图无滤镜 */          \
         vec3 rgb = c0;                                                              \
         if (u_Deband > 0.001) {                                                     \
             rgb = applyDeband(c0, uv);                                              \

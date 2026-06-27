@@ -271,6 +271,7 @@ void SkyVideoOutHandler::setWindow(EGLNativeWindowType window) {
                 renderer_->clearLut();
             }
             renderer_->setEnhance(enhanceSharpness_, enhanceDeband_);
+            renderer_->setCompare(compareSplit_);
         }
 
         ALOG_I(TAG, "Window set successfully, renderer ready: %s", renderer_ ? "true" : "false");
@@ -327,6 +328,12 @@ void SkyVideoOutHandler::setEnhance(float sharpness, float deband) {
     enhanceSharpness_ = sharpness;
     enhanceDeband_ = deband;
     if (renderer_) renderer_->setEnhance(sharpness, deband);
+}
+
+void SkyVideoOutHandler::setCompare(float split) {
+    std::lock_guard<std::mutex> lock(mtx);
+    compareSplit_ = split;
+    if (renderer_) renderer_->setCompare(split);
 }
 
 bool SkyVideoOutHandler::displayImage(AVFrame *frame) {
@@ -825,6 +832,15 @@ int SkyPlayer::setEnhance(float sharpness, float deband) {
     // 暂停时也立即按新参数重绘当前帧
     if (is) sky_request_video_redraw(is);
     ALOG_I(TAG, "setEnhance() sharpness=%.2f deband=%.2f", sharpness, deband);
+    return 0;
+}
+
+int SkyPlayer::setCompare(float split) {
+    std::lock_guard<std::mutex> lock(mtx);
+    split = split < 0.0f ? 0.0f : (split > 1.0f ? 1.0f : split);
+    skyVideoOutHandler_.setCompare(split);
+    if (is) sky_request_video_redraw(is);
+    ALOG_I(TAG, "setCompare() split=%.3f", split);
     return 0;
 }
 

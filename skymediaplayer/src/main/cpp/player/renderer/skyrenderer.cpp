@@ -42,6 +42,7 @@ bool SkyEGL2Renderer::displayImage(EGLNativeWindowType window, AVFrame *frame) {
             }
             if (enhanceDirty_ || implRecreated_) {
                 rendererImp_->updateEnhance(enhanceSharpness_, enhanceDeband_);
+                rendererImp_->updateCompare(enhanceSplit_);
                 enhanceDirty_ = false;
             }
             implRecreated_ = false;
@@ -109,6 +110,12 @@ void SkyEGL2Renderer::setEnhance(float sharpness, float deband) {
     std::lock_guard<std::mutex> lk(lutMtx_);
     enhanceSharpness_ = sharpness;
     enhanceDeband_ = deband;
+    enhanceDirty_ = true;
+}
+
+void SkyEGL2Renderer::setCompare(float split) {
+    std::lock_guard<std::mutex> lk(lutMtx_);
+    enhanceSplit_ = split;
     enhanceDirty_ = true;
 }
 
@@ -440,6 +447,7 @@ void SkyEGL2RendererImp::init() {
     u_lut_enabled_   = glGetUniformLocation(program, "u_LutEnabled");
     u_sharpness_     = glGetUniformLocation(program, "u_Sharpness");
     u_deband_        = glGetUniformLocation(program, "u_Deband");
+    u_split_         = glGetUniformLocation(program, "u_Split");
     u_texel_size_    = glGetUniformLocation(program, "u_TexelSize");
 
     return;
@@ -562,6 +570,10 @@ void SkyEGL2RendererImp::updateEnhance(float sharpness, float deband) {
     enhance_deband_ = deband;
 }
 
+void SkyEGL2RendererImp::updateCompare(float split) {
+    enhance_split_ = split;
+}
+
 void SkyEGL2RendererImp::applyEffectsInRender(const AVFrame* avFrame) {
     // 保存当前 active 纹理单元（= use() 最后设置的单元），LUT 用单元 3，结束后还原，
     // 以免影响下一帧 uploadTexture 依赖的 active 单元状态。
@@ -594,6 +606,7 @@ void SkyEGL2RendererImp::applyEffectsInRender(const AVFrame* avFrame) {
     // 画质增强 uniform：texel size 按当前帧设置，对 impl 重建/分辨率变化天然鲁棒
     glUniform1f(u_sharpness_, enhance_sharpness_);
     glUniform1f(u_deband_, enhance_deband_);
+    glUniform1f(u_split_, enhance_split_);
     if (avFrame && avFrame->width > 0 && avFrame->height > 0) {
         glUniform2f(u_texel_size_, 1.0f / (float) avFrame->width, 1.0f / (float) avFrame->height);
     }

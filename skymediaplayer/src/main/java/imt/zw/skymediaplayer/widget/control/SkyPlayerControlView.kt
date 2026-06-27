@@ -28,6 +28,8 @@ class SkyPlayerControlView @JvmOverloads constructor(
     companion object {
         private const val TAG = "SkyPlayerControlView"
         private const val PROGRESS_UPDATE_INTERVAL_MS = 500L
+        /** 前进/后退步长（毫秒），工具栏与双击共用 */
+        const val SEEK_STEP_MS = 10000
     }
 
     // UI 组件
@@ -178,9 +180,9 @@ class SkyPlayerControlView @JvmOverloads constructor(
             setOnClickListener {
                 onUserInteraction()
                 playerControl?.let {
-                    val newPos = maxOf(0, it.getCurrentPosition() - 10000)
+                    val newPos = maxOf(0, it.getCurrentPosition() - SEEK_STEP_MS)
                     it.seekTo(newPos)
-                    Log.d(TAG, "Rewind 10s to: $newPos")
+                    Log.d(TAG, "Rewind ${SEEK_STEP_MS}ms to: $newPos")
                 }
             }
             contentDescription = "后退10秒"
@@ -202,9 +204,9 @@ class SkyPlayerControlView @JvmOverloads constructor(
             setOnClickListener {
                 onUserInteraction()
                 playerControl?.let {
-                    val newPos = minOf(it.getDuration(), it.getCurrentPosition() + 10000)
+                    val newPos = minOf(it.getDuration(), it.getCurrentPosition() + SEEK_STEP_MS)
                     it.seekTo(newPos)
-                    Log.d(TAG, "Forward 10s to: $newPos")
+                    Log.d(TAG, "Forward ${SEEK_STEP_MS}ms to: $newPos")
                 }
             }
             contentDescription = "前进10秒"

@@ -1327,6 +1327,10 @@ static void stream_toggle_pause(VideoState *is)
             is->vidclk.paused = 0;
         }
         set_clock(&is->vidclk, get_clock(&is->vidclk), is->vidclk.serial);
+        // resume 时重置 frame_timer 到当前，否则它停留在暂停前的旧值，
+        // video_refresh 里 time<frame_timer+delay 恒真、画面卡住不前进直到真实时间追上，
+        // 表现为声音先出、画面延迟约暂停时长才动
+        is->frame_timer = av_gettime_relative() / 1000000.0;
     }
     set_clock(&is->extclk, get_clock(&is->extclk), is->extclk.serial);
     is->paused = is->audclk.paused = is->vidclk.paused = is->extclk.paused = !is->paused;

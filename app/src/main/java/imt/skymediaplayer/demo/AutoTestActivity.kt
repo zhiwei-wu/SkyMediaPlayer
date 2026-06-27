@@ -589,10 +589,10 @@ class AutoTestActivity : AppCompatActivity() {
 
         // 1) 依次单开各效果 + 越界输入（Kotlin 层 coerceIn）+ 全开，均应返回 0
         val steps = listOf(
-            Pair(1f, 0f),
-            Pair(0f, 1f),
-            Pair(2f, 0.5f),
-            Pair(1f, 1f)
+            1f to 0f,
+            0f to 1f,
+            2f to 0.5f,
+            1f to 1f
         )
         for ((s, d) in steps) {
             val ret = testVideoView.setEnhance(s, d)
@@ -745,9 +745,9 @@ class AutoTestActivity : AppCompatActivity() {
     private fun runEnhanceAbSequence(testCase: TestCase, idx: Int) {
         val tag = testCase.name.removePrefix("A/B ").replace(' ', '_')
         val enhance = when (testCase.spikeEffect) {
-            "sharp" -> Pair(1f, 0f)
-            "deband" -> Pair(0f, 1f)
-            else -> Pair(1f, 1f)
+            "sharp" -> 1f to 0f
+            "deband" -> 0f to 1f
+            else -> 1f to 1f
         }
 
         testVideoView.setEnhance(0f, 0f)
@@ -1223,7 +1223,7 @@ class AutoTestActivity : AppCompatActivity() {
     }
 
     private fun navigateToMain() {
-        val intent = Intent(this, MainActivity::class.java)
+        val intent = Intent(this, SkyVideoActivity::class.java)
         intent.putExtra("skip_auto_test", true)
         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         startActivity(intent)

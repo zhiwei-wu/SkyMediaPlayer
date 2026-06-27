@@ -9,7 +9,7 @@ import android.content.Context
 object DecoderPreferences {
     private const val PREF_NAME = "sky_player_settings"
     private const val KEY_DECODER_MODE = "decoder_mode"
-    private const val DEFAULT_MODE = 3  // AUTO（自动三级回退）
+    private const val DEFAULT_MODE = 1  // 硬解Buffer
 
     /**
      * 获取保存的解码模式值

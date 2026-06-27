@@ -85,6 +85,12 @@ public:
      */
     void updateEnhance(float sharpness, float deband);
 
+    /**
+     * 更新 A/B 对比分界（在 GL 线程调用）
+     * @param split 归一化分界 x（0..1），<=0 表示全画面应用增强（关闭对比）
+     */
+    void updateCompare(float split);
+
 public:
     AVPixelFormat avPixFormat = AV_PIX_FMT_NONE;
 
@@ -130,6 +136,10 @@ protected:
     float  enhance_sharpness_ = 0.0f;
     float  enhance_deband_ = 0.0f;
 
+    // A/B 对比分界：x < split 显示原图，>= split 显示增强；0=关闭对比
+    GLint  u_split_ = -1;
+    float  enhance_split_ = 0.0f;
+
     // 在 renderImage() 内绑定 LUT 纹理并设置 LUT/增强 uniform（保存/恢复 active 纹理单元）
     void applyEffectsInRender(const AVFrame* avFrame);
     // 释放 LUT 纹理（在 reset() 中调用，需 GL 上下文 current）
@@ -161,6 +171,12 @@ public:
     virtual void setEnhance(float sharpness, float deband) {}
 
     /**
+     * 设置 A/B 对比分界（左原图右滤镜）。线程安全，可播放中调用。
+     * @param split 归一化分界 x（0..1），<=0 关闭对比（全画面应用滤镜）
+     */
+    virtual void setCompare(float split) {}
+
+    /**
      * 工厂方法：根据渲染后端类型创建对应的渲染器实例
      * @param backend 渲染后端类型
      * @return 渲染器实例，Vulkan/Metal 暂未实现时回退到 OpenGL ES
@@ -179,6 +195,7 @@ public:
     void setLut(const uint8_t* rgba, int len, float intensity) override;
     void clearLut() override;
     void setEnhance(float sharpness, float deband) override;
+    void setCompare(float split) override;
 
 private:
     EGLBoolean setup();
@@ -203,6 +220,7 @@ private:
     // 画质增强状态（与 LUT 同模式，复用 lutMtx_）
     float enhanceSharpness_ = 0.0f;
     float enhanceDeband_ = 0.0f;
+    float enhanceSplit_ = 0.0f;
     bool  enhanceDirty_ = false;
 
     EGLNativeWindowType window_;

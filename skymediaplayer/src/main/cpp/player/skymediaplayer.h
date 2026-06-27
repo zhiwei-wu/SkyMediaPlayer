@@ -115,6 +115,9 @@ public:
      */
     void setEnhance(float sharpness, float deband);
 
+    /** 设置 A/B 对比分界（0..1，0=关闭）。缓存供渲染器重建回灌。 */
+    void setCompare(float split);
+
     /**
      * 获取当前 ANativeWindow 指针（用于 Surface 直渲模式）
      * @return ANativeWindow 指针，可能为 nullptr
@@ -137,6 +140,7 @@ private:
     // 画质增强状态缓存（用于渲染器重建后回灌），0=关闭
     float enhanceSharpness_ = 0.0f;
     float enhanceDeband_ = 0.0f;
+    float compareSplit_ = 0.0f;
 };
 
 enum class AudioOutType {
@@ -353,6 +357,9 @@ public:
 
     // 设置画质增强强度（CAS 锐化/去色带，各 0..1，0=关闭）
     int setEnhance(float sharpness, float deband);
+
+    // 设置 A/B 对比分界（左原图右滤镜，0..1，0=关闭对比）
+    int setCompare(float split);
 
     // 设置渲染后端（必须在 prepareAsync 之前调用）
     void setRendererBackend(RendererBackend backend);

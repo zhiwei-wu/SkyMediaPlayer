@@ -39,6 +39,8 @@ class SkyQualityPanel @JvmOverloads constructor(
         fun onIntensityChanged(percent: Int)
         /** 画质增强参数调节结束（各 0-100，0=关闭） */
         fun onEnhanceChanged(sharpness: Int, deband: Int)
+        /** A/B 对比分屏开关切换（左原图右滤镜） */
+        fun onCompareToggle(enabled: Boolean)
     }
 
     private lateinit var gridContainer: LinearLayout
@@ -57,16 +59,16 @@ class SkyQualityPanel @JvmOverloads constructor(
 
     init {
         panelContainer.addView(buildSectionHeader())
-        panelContainer.addView(buildFeaturedCard())
         gridContainer = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dpToPx(12) }
+            )
         }
         panelContainer.addView(gridContainer)
-        panelContainer.addView(buildEnhanceHeader())
+        panelContainer.addView(buildFeaturedCard())
+        panelContainer.addView(buildSimpleHeader("画质增强"))
         enhanceSharpnessBar = addEnhanceRow("锐化", "低码率糊源更清晰（CAS）")
         enhanceDebandBar = addEnhanceRow("去色带", "平滑渐变处的压缩色带")
     }
@@ -94,6 +96,23 @@ class SkyQualityPanel @JvmOverloads constructor(
                 .apply { leftMargin = dpToPx(10) }
         }
         row.addView(headerValue)
+        // 对比开关：开启后左原图右滤镜，拖动竖条对比效果差异；自动联动面板透明以便观察
+        row.addView(TextView(context).apply {
+            text = "对比"
+            setTextColor(TEXT_GRAY)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        })
+        row.addView(Switch(context).apply {
+            isChecked = false
+            setOnCheckedChangeListener { _, checked ->
+                if (checked) setPanelTransparent(true)
+                listener?.onCompareToggle(checked)
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { rightMargin = dpToPx(10) }
+        })
         // 面板透明开关：默认关；打开后面板/遮罩透明，调节滤镜时可立即看到背后视频
         row.addView(TextView(context).apply {
             text = "面板透明"
@@ -112,61 +131,29 @@ class SkyQualityPanel @JvmOverloads constructor(
     }
 
     private fun buildFeaturedCard(): View {
+        // 单行紧凑卡：标题 + 滑杆 + 百分比，高度对齐滤镜卡片（64dp）
         featuredCard = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dpToPx(16), dpToPx(12), dpToPx(16), dpToPx(14))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-
-        // 顶部行：标题（左） + 百分比（右）
-        val topRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(dpToPx(16), 0, dpToPx(16), 0)
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
+                LinearLayout.LayoutParams.MATCH_PARENT, dpToPx(64)
+            ).apply { topMargin = dpToPx(10) }
         }
         featuredTitle = TextView(context).apply {
             text = "滤镜强度"
             setTextColor(GOLD)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        topRow.addView(featuredTitle)
-        intensityValue = TextView(context).apply {
-            text = "100%"
-            setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
         }
-        topRow.addView(intensityValue)
-        featuredCard.addView(topRow)
-
-        // 副标题
-        featuredCard.addView(TextView(context).apply {
-            text = "滑动调节滤镜浓淡"
-            setTextColor(TEXT_GRAY)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dpToPx(2) }
-        })
-
-        // 整宽长滑杆
+        featuredCard.addView(featuredTitle)
         intensitySeekBar = SeekBar(context).apply {
             max = 100
             progress = 100
             progressTintList = android.content.res.ColorStateList.valueOf(GOLD)
             thumbTintList = android.content.res.ColorStateList.valueOf(GOLD)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dpToPx(8) }
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { leftMargin = dpToPx(12); rightMargin = dpToPx(12) }
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
                     intensityValue.text = "$p%"
@@ -178,7 +165,13 @@ class SkyQualityPanel @JvmOverloads constructor(
             })
         }
         featuredCard.addView(intensitySeekBar)
-
+        intensityValue = TextView(context).apply {
+            text = "100%"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        }
+        featuredCard.addView(intensityValue)
+        featuredCard.visibility = View.GONE  // 无滤镜时隐藏，选中真滤镜才显示
         applyFeaturedStyle(false)
         return featuredCard
     }
@@ -273,14 +266,15 @@ class SkyQualityPanel @JvmOverloads constructor(
             (card.findViewWithTag<TextView>("title"))?.setTextColor(if (selected) GOLD else Color.WHITE)
         }
         val active = selectedId != null && selectedId != "none"
+        featuredCard.visibility = if (active) View.VISIBLE else View.GONE
         applyFeaturedStyle(active)
         val name = items.firstOrNull { it.id == selectedId }?.title ?: "无"
         headerValue.text = "当前：$name"
     }
 
-    private fun buildEnhanceHeader(): View {
+    private fun buildSimpleHeader(title: String): View {
         return TextView(context).apply {
-            text = "画质增强"
+            text = title
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
             typeface = android.graphics.Typeface.DEFAULT_BOLD

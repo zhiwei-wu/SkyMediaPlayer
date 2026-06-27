@@ -9,6 +9,7 @@ layout(push_constant) uniform PushConstants {
     float lutEnabled;
     float sharpness;
     float deband;
+    float split;
 } pc;
 
 #include "enhance.glsl"

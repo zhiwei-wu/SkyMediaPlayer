@@ -50,7 +50,9 @@ vec3 casDelta(vec3 c0, vec2 uv, vec2 texel) {
 }
 
 // 增强主管线：c0 为原始 sampleRGB(uv)，强度为 0 的效果整体跳过
+// 对比模式：uv.x < pc.split 返回原图（split<=0 关闭对比，全画面增强）
 vec3 applyEnhance(vec3 c0, vec2 uv, vec2 texel) {
+    if (uv.x < pc.split) { return c0; }
     vec3 rgb = c0;
     if (pc.deband > 0.001) {
         rgb = applyDeband(c0, uv, texel);

@@ -8,6 +8,7 @@
 @.agents/rules/features.md
 @.agents/rules/code-style.md
 @.agents/rules/FFmpeg_Compile.md
+@.agents/rules/git-workflow.md
 
 ## 技能（Skills）
 

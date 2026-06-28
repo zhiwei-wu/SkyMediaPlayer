@@ -557,13 +557,15 @@ class SkyVideoView(context: Context,
      * @param modelPath 模型文件路径（启用时必须提供）
      * @param language 语言代码，如 "zh"、"en"，默认 "zh"
      * @param queueSeconds 推理间隔（秒），范围 3-20，默认 10
+     * @param useGpu 是否用 GPU(Vulkan) 推理；默认 false 走 CPU
      * @return 0 成功，负值失败
      */
     fun setWhisperEnabled(
         enabled: Boolean,
         modelPath: String? = null,
         language: String = "zh",
-        queueSeconds: Int = 10
+        queueSeconds: Int = 10,
+        useGpu: Boolean = false
     ): Int {
         _isWhisperEnabled = enabled
         _whisperModelPath = modelPath
@@ -574,7 +576,7 @@ class SkyVideoView(context: Context,
             return -1
         }
 
-        val result = player.setWhisperEnabled(enabled, modelPath, language, queueSeconds)
+        val result = player.setWhisperEnabled(enabled, modelPath, language, queueSeconds, useGpu)
 
         Log.i(TAG, "setWhisperEnabled: enabled=$enabled, queueSeconds=$queueSeconds, result=$result")
         return result

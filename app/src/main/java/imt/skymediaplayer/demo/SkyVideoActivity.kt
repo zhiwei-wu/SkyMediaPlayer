@@ -34,6 +34,7 @@ import imt.zw.skymediaplayer.widget.SkyVideoView
 import imt.zw.skymediaplayer.widget.control.SkyQualityPanel
 import imt.zw.skymediaplayer.widget.control.OnSubtitleSettingsChangeListener
 import imt.zw.skymediaplayer.widget.control.SubtitleSettings
+import imt.zw.skymediaplayer.widget.control.InferenceDevice
 
 class SkyVideoActivity : AppCompatActivity() {
     companion object {
@@ -692,7 +693,9 @@ class SkyVideoActivity : AppCompatActivity() {
             "en" // 默认英文识别
         }
 
-        val result = mSkyVideoView.setWhisperEnabled(true, modelPath, language, settings.processingInterval)
+        // 仅用户显式选 GPU 才走 Vulkan，默认 CPU（PowerVR 上 GPU 推理乱码/为空，导致一直卡 loading）
+        val useGpu = settings.inferenceDevice == InferenceDevice.GPU
+        val result = mSkyVideoView.setWhisperEnabled(true, modelPath, language, settings.processingInterval, useGpu)
         if (result != 0) {
             Toast.makeText(this, "AI 字幕开启失败", Toast.LENGTH_SHORT).show()
             mSkyVideoView.setSubtitleSettings(settings.copy(enabled = false))

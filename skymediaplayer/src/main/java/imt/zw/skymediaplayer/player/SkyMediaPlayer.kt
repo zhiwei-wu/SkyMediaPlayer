@@ -700,13 +700,15 @@ class SkyMediaPlayer() : IMediaPlayer {
      * @param modelPath 模型文件路径（启用时必须提供）
      * @param language 语言代码，如 "zh"、"en"，默认 "zh"
      * @param queueSeconds 推理间隔（秒），范围 3-20，默认 10
+     * @param useGpu 是否用 GPU(Vulkan) 推理；默认 false 走 CPU（PowerVR 上 GPU 推理产出乱码/为空，会卡 loading）
      * @return 0 成功，负值失败
      */
     fun setWhisperEnabled(
         enabled: Boolean,
         modelPath: String? = null,
         language: String = "zh",
-        queueSeconds: Int = 10
+        queueSeconds: Int = 10,
+        useGpu: Boolean = false
     ): Int {
         return if (enabled) {
             if (modelPath.isNullOrEmpty()) {
@@ -715,7 +717,7 @@ class SkyMediaPlayer() : IMediaPlayer {
             } else {
                 // 确保 queueSeconds 在有效范围内 (3-20)
                 val validQueueSeconds = queueSeconds.coerceIn(3, 20)
-                val filter = "whisper=model=$modelPath:language=$language:queue=${validQueueSeconds}s:use_gpu=1"
+                val filter = "whisper=model=$modelPath:language=$language:queue=${validQueueSeconds}s:use_gpu=${if (useGpu) 1 else 0}"
                 Log.i(TAG, "setWhisperEnabled: enabling with filter=$filter")
                 setAudioFilter(filter)
             }

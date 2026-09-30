@@ -82,7 +82,7 @@ GLboolean SkyEGL2RendererNV21Imp::isValid() {
 }
 
 GLsizei SkyEGL2RendererNV21Imp::getBufferWidth(AVFrame *avFrame) {
-    return avFrame->linesize[0];
+    return avFrame->width;
 }
 
 GLboolean SkyEGL2RendererNV21Imp::uploadTexture(AVFrame *avFrame) {
@@ -107,7 +107,7 @@ GLboolean SkyEGL2RendererNV21Imp::uploadTexture(AVFrame *avFrame) {
     glTexImage2D(GL_TEXTURE_2D,
                  0,
                  GL_LUMINANCE,
-                 avFrame->linesize[0],
+                 avFrame->width,
                  avFrame->height,
                  0,
                  GL_LUMINANCE,
@@ -119,7 +119,7 @@ GLboolean SkyEGL2RendererNV21Imp::uploadTexture(AVFrame *avFrame) {
     glTexImage2D(GL_TEXTURE_2D,
                  0,
                  GL_LUMINANCE_ALPHA,  // NV21 VU plane is interleaved
-                 avFrame->linesize[1] / 2,  // UV width is half
+                 uvWidth,  // Packed VU texture width in pixels
                  uvHeight,       // UV height is half
                  0,
                  GL_LUMINANCE_ALPHA,

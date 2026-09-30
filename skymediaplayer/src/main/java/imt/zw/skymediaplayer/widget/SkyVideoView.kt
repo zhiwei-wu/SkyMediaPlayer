@@ -259,23 +259,9 @@ class SkyVideoView(context: Context,
     }
 
     fun setVideoURI(uri: Uri) {
-        // 尝试将 URI 转换为本地路径
-        _localVideoPath = Utils.getRealPathFromURI(context, uri)
-
-        // 如果转换失败，复制到临时文件
-        if (_localVideoPath == null) {
-            Log.d(TAG, "setVideoURI: $uri, cannot convert to path, copying to temp file")
-            _localVideoPath = Utils.copyUriToTempFile(context, uri)
-            if (_localVideoPath != null) {
-                Log.d(TAG, "setVideoURI: copied to temp file: $_localVideoPath")
-            } else {
-                Log.e(TAG, "setVideoURI: failed to copy URI to temp file")
-            }
-        } else {
-            Log.d(TAG, "setVideoURI: $uri, converted to path: $_localVideoPath")
-        }
-
-        _videoUri = null
+        // Preserve the selected document permission instead of reopening a raw path.
+        _localVideoPath = null
+        _videoUri = uri
 
         // 检查 Surface 是否已经准备好
         if (_surfaceRenderView?.getSurfaceHolder() != null) {

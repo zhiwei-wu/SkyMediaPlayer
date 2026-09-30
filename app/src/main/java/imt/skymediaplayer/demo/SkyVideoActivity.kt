@@ -235,22 +235,11 @@ class SkyVideoActivity : AppCompatActivity() {
 
     /** 打开本地 SAF：方向交给系统，仅记录进入前方向，返回时恢复 */
     private fun openLocalPicker() {
-        ensureAllFilesAccess()
         // 离开播放前暂停当前视频，返回未换片时恢复
         wasPlayingBeforePicker = hasVideoSource && mSkyVideoView.isPlaying()
         if (wasPlayingBeforePicker) mSkyVideoView.pause()
         orientationBeforePicker = requestedOrientation
         localPickerLauncher.launch(arrayOf("video/*"))
-    }
-
-    /** 原始路径直开需「所有文件」权限，未授时引导前往设置 */
-    private fun ensureAllFilesAccess() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R &&
-            !android.os.Environment.isExternalStorageManager()) {
-            Toast.makeText(this, "请开启「所有文件访问」权限以播放本地视频", Toast.LENGTH_LONG).show()
-            startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                Uri.parse("package:$packageName")))
-        }
     }
 
     /** 起播本地 content uri */
@@ -293,8 +282,7 @@ class SkyVideoActivity : AppCompatActivity() {
         if (item.type == RecentPlayPreferences.TYPE_URL) {
             playUrl(item.uri)
         } else {
-            ensureAllFilesAccess()
-            playUri(Uri.parse(item.uri))
+                playUri(Uri.parse(item.uri))
         }
     }
 

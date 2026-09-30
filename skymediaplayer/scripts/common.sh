@@ -111,7 +111,7 @@ setup_build_flags() {
 
     # 公共参数
     COMMON_CFLAGS="-fPIC"
-    COMMON_LDFLAGS=""
+    COMMON_LDFLAGS="-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"
 
     case "${build_type}" in
         release)
@@ -235,7 +235,7 @@ verify_shared_library() {
     if [[ -n "${expected_symbols}" ]]; then
         local missing=false
         for symbol in ${expected_symbols}; do
-            if ! ${NM} -D "${so_file}" 2>/dev/null | grep -q "${symbol}"; then
+            if ! ${NM} -D "${so_file}" 2>/dev/null | grep "${symbol}" >/dev/null; then
                 log_warn "缺少期望的符号: ${symbol}"
                 missing=true
             fi

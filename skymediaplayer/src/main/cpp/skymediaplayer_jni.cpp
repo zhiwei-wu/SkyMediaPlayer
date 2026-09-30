@@ -265,9 +265,13 @@ void sky_mediaPlayer_setVideoSurface(JNIEnv *env, jobject thiz, jobject jsurface
 
     std::lock_guard<std::mutex> lock(player->mtx);
 
-    EGLNativeWindowType window = ANativeWindow_fromSurface(env, jsurface);
-    if (nullptr != window) {
-        player->getSkyVideoOutHandler().setWindow(window);
+    EGLNativeWindowType window = jsurface ? ANativeWindow_fromSurface(env, jsurface) : nullptr;
+    player->getSkyVideoOutHandler().setWindow(window);
+    if (window) {
+        // setWindow retains its own reference; balance ANativeWindow_fromSurface.
+        ANativeWindow_release(window);
+        // A recreated Surface has no previously uploaded image, including while paused.
+        sky_request_video_redraw(player->is);
     }
 }
 

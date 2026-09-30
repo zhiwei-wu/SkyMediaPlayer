@@ -22,7 +22,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "Sky Player"
 include(":app")
-include(":xffmpeg")
 
 // 仅在项目源码依赖模式下 include skymediaplayer 模块
 val skyDependencyMode: String by settings

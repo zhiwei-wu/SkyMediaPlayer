@@ -452,6 +452,9 @@ void SkyPlayer::cleanup() {
     messageQueue_.abort();
     messageQueue_.destroy();
 
+    // Wake an audio callback waiting on an empty frame queue (e.g. EOF) before join.
+    sky_abort_playback(is);
+
     // 2. 先关闭音频输出（停止 audio_thread_），必须在 stream_close 之前
     //    因为 audio_thread_ 的回调 sdl_audio_callback 会访问 ffplay 的
     //    sampq.mutex 等资源，如果先调用 stream_close 销毁这些 mutex，

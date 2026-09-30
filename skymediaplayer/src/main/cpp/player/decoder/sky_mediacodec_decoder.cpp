@@ -216,25 +216,30 @@ bool SkyMediaCodecDecoder::parseHvccExtradata(const uint8_t *extradata, int extr
 bool SkyMediaCodecDecoder::convertPacketToAnnexB(const uint8_t *srcData, int srcSize,
                                                   std::vector<uint8_t> &dstData) {
     dstData.clear();
-    // 预分配：最坏情况下大小不变（4字节 length → 4字节 start code）
-    dstData.reserve(srcSize);
+    if (!srcData || srcSize <= 0 || nalLengthSize_ < 1 || nalLengthSize_ > 4) {
+        return false;
+    }
+    dstData.reserve(static_cast<size_t>(srcSize));
 
-    int offset = 0;
-    while (offset + nalLengthSize_ <= srcSize) {
-        // 读取 NAL 长度（大端）
+    size_t offset = 0;
+    const size_t size = static_cast<size_t>(srcSize);
+    while (offset < size) {
+        if (size - offset < static_cast<size_t>(nalLengthSize_)) {
+            dstData.clear();
+            return false;
+        }
         uint32_t nalLength = 0;
-        for (int i = 0; i < nalLengthSize_; i++) {
+        for (int i = 0; i < nalLengthSize_; ++i) {
             nalLength = (nalLength << 8) | srcData[offset + i];
         }
         offset += nalLengthSize_;
-
-        if (nalLength == 0 || offset + (int)nalLength > srcSize) {
-            ALOG_W(TAG, "Invalid NAL length %u at offset %d, srcSize=%d",
+        // Compare against remaining bytes without signed conversion or addition overflow.
+        if (nalLength == 0 || static_cast<size_t>(nalLength) > size - offset) {
+            ALOG_W(TAG, "Invalid NAL length %u at offset %zu, srcSize=%d",
                    nalLength, offset, srcSize);
-            break;
+            dstData.clear();
+            return false;
         }
-
-        // 写入 4 字节 Annex-B start code + NAL 数据
         dstData.insert(dstData.end(), ANNEX_B_START_CODE, ANNEX_B_START_CODE + 4);
         dstData.insert(dstData.end(), srcData + offset, srcData + offset + nalLength);
         offset += nalLength;

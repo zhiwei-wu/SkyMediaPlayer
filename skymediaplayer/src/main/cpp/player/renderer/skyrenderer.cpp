@@ -25,6 +25,16 @@ bool SkyEGL2Renderer::displayImage(EGLNativeWindowType window, AVFrame *frame) {
         return false;
     }
 
+    // Always detach, including an upload/setup failure, so Surface teardown can
+    // bind this context safely on its calling thread under the handler mutex.
+    struct DetachContext {
+        EGLDisplay display;
+        ~DetachContext() {
+            eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+            eglReleaseThread();
+        }
+    } detach{display_};
+
     if (!prepareRenderer(frame)) {
         ALOG_E(TAG, "prepareRenderer() fail!");
         return false;
@@ -54,10 +64,10 @@ bool SkyEGL2Renderer::displayImage(EGLNativeWindowType window, AVFrame *frame) {
         ALOG_E(TAG, "displayImage() renderImage fail");
         return false;
     }
-    eglSwapBuffers(display_, surface_);
-    eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-    eglReleaseThread();
-
+    if (!eglSwapBuffers(display_, surface_)) {
+        ALOG_E(TAG, "eglSwapBuffers failed: 0x%x", eglGetError());
+        return false;
+    }
     return true;
 }
 
@@ -68,6 +78,16 @@ void SkyEGL2Renderer::terminate() {
     }
     FUNC_TRACE()
 
+    // Delete GL objects while their context still exists and is current.
+    if (eglMakeCurrent(display_, surface_, surface_, context_)) {
+        if (rendererImp_) rendererImp_->reset();
+        rendererImp_.reset();
+    } else {
+        ALOG_W(TAG, "Unable to bind context for GL cleanup: 0x%x", eglGetError());
+        // The context owns its GL resources. Destroying it frees them even if
+        // its old Surface can no longer be bound; the impl destructor is CPU-only.
+        rendererImp_.reset();
+    }
     eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     eglDestroyContext(display_, context_);
     eglDestroySurface(display_, surface_);
@@ -77,10 +97,8 @@ void SkyEGL2Renderer::terminate() {
     context_ = EGL_NO_CONTEXT;
     surface_ = EGL_NO_SURFACE;
     display_ = EGL_NO_DISPLAY;
+    window_ = nullptr;
 
-    if (nullptr != rendererImp_) {
-        rendererImp_->reset();
-    }
 }
 
 bool SkyEGL2Renderer::isValid() {

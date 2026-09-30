@@ -3,6 +3,11 @@ plugins {
     alias(libs.plugins.kotlin.android)
 }
 
+// Versions are supplied explicitly for release builds; debug keeps its old defaults.
+val apkVersionCode = providers.gradleProperty("skyVersionCode")
+val apkVersionName = providers.gradleProperty("skyVersionName")
+val releaseVersionCode = apkVersionCode.orNull?.toIntOrNull()
+
 // 读取依赖配置
 val skyDependencyMode: String by project
 val skyAarBuildType: String by project
@@ -17,8 +22,8 @@ android {
         applicationId = "imt.skymediaplayer.demo"
         minSdk = 30
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = releaseVersionCode ?: 1
+        versionName = apkVersionName.orElse("1.0").get()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -31,8 +36,14 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Keep diagnostic builds beside the user installation.
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -75,4 +86,57 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+}
+
+// Compress native libraries only in release APKs. Android extracts them at install time.
+// This trades installation space for a smaller direct-download APK.
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        variant.packaging.jniLibs.useLegacyPackaging.set(true)
+    }
+}
+
+val validateReleaseConfiguration by tasks.registering {
+    group = "verification"
+    description = "Validate explicit APK versions and current-source release settings."
+    doLast {
+        require(releaseVersionCode != null && releaseVersionCode in 2..2100000000) {
+            "Release requires -PskyVersionCode=<integer greater than all published APKs (at least 2)>"
+        }
+        require(apkVersionName.orNull?.matches(Regex("[0-9]+[.][0-9]+[.][0-9]+([.-][A-Za-z0-9.-]+)?")) == true) {
+            "Release requires -PskyVersionName=<version, e.g. 1.6.1-preparation>"
+        }
+        require(android.buildTypes.getByName("release").signingConfig == null) {
+            "Preparation must remain unsigned; signing is a separate maintainer step."
+        }
+        require(skyDependencyMode == "project") {
+            "Release APK must use current source: -PskyDependencyMode=project"
+        }
+        require(skyAutoTestEnabled == "false") {
+            "Release APK must disable automatic test startup: -PskyAutoTestEnabled=false"
+        }
+    }
+}
+
+tasks.matching { it.name == "preReleaseBuild" }.configureEach {
+    dependsOn(validateReleaseConfiguration)
+}
+
+// Deliberately unsigned: signing happens on the maintainer's machine with the existing key.
+// No signing credentials are loaded by this build.
+val prepareReleaseApk by tasks.registering(Sync::class) {
+    group = "distribution"
+    description = "Build and stage an unsigned APK, R8 mapping and APK metadata for local signing."
+    dependsOn("assembleRelease")
+    into(layout.buildDirectory.dir("release-apk"))
+    from(layout.buildDirectory.file("outputs/apk/release/app-release-unsigned.apk")) {
+        rename { "SkyMediaPlayer-${apkVersionName.get()}-arm64-v8a-unsigned.apk" }
+    }
+    from(layout.buildDirectory.file("outputs/apk/release/output-metadata.json"))
+    from(layout.buildDirectory.file("outputs/mapping/release/mapping.txt"))
+    doFirst {
+        check(layout.buildDirectory.file("outputs/apk/release/app-release-unsigned.apk").get().asFile.isFile) {
+            "Unsigned release APK missing; do not distribute a debug or stale APK."
+        }
+    }
 }

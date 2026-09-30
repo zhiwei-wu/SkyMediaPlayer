@@ -29,6 +29,9 @@
 #include <limits.h>
 #include <signal.h>
 #include <stdint.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <errno.h>
 
 #include "libavutil/avstring.h"
 #include "libavutil/channel_layout.h"
@@ -43,6 +46,8 @@
 #include "libavutil/time.h"
 #include "libavutil/bprint.h"
 #include "libavformat/avformat.h"
+
+static void sky_close_input(AVFormatContext **context);
 #include "libswscale/swscale.h"
 #include "libavutil/opt.h"
 #include "libavutil/tx.h"
@@ -1056,6 +1061,19 @@ static void stream_component_close(VideoState *is, int stream_index)
     }
 }
 
+void sky_abort_playback(VideoState *is)
+{
+    if (!is) return;
+    // Wake callbacks/producers before waiting for any output thread.
+    is->abort_request = 1;
+    packet_queue_abort(&is->audioq);
+    packet_queue_abort(&is->videoq);
+    packet_queue_abort(&is->subtitleq);
+    frame_queue_signal(&is->sampq);
+    frame_queue_signal(&is->pictq);
+    frame_queue_signal(&is->subpq);
+}
+
 void stream_close(VideoState *is)
 {
     /* XXX: use a special url_shutdown call to abort parse cleanly */
@@ -1086,7 +1104,7 @@ void stream_close(VideoState *is)
     if (is->subtitle_stream >= 0)
         stream_component_close(is, is->subtitle_stream);
 
-    avformat_close_input(&is->ic);
+    sky_close_input(&is->ic);
 
     packet_queue_destroy(&is->videoq);
     packet_queue_destroy(&is->audioq);
@@ -1569,6 +1587,20 @@ display:
         }
     }
     is->force_refresh = 0;
+#ifndef NDEBUG
+    // Diagnostic clock evidence for real-device A/V and seek validation.
+    if (is->audio_st && is->video_st && !is->paused) {
+        static int64_t last_sync_log;
+        const int64_t now = av_gettime_relative();
+        if (now - last_sync_log >= 1000000) {
+            const double audio = get_clock(&is->audclk);
+            const double video = get_clock(&is->vidclk);
+            if (isfinite(audio) && isfinite(video))
+                ALOG_D(FFPLAY_TAG, "[AVSync] audio=%.3f video=%.3f diff=%.3f", audio, video, audio-video);
+            last_sync_log = now;
+        }
+    }
+#endif
     if (show_status) {
         AVBPrint buf;
         static int64_t last_time;
@@ -2011,6 +2043,77 @@ static int whisper_decode_thread(void *arg)
  * Whisper 独立读取线程
  * 独立打开同一个文件，读取音频 packet，始终保持比播放位置超前 N 秒
  */
+// SAF descriptors cannot be reopened through /proc under scoped-storage rules.
+// Each reader has an independent logical offset, including the Whisper reader.
+struct SkyDocumentInput { int fd; int64_t offset; int64_t size; };
+
+static int sky_document_read(void *opaque, uint8_t *buffer, int size) {
+    struct SkyDocumentInput *input = opaque;
+    ssize_t count;
+    do { count = pread(input->fd, buffer, size, input->offset); }
+    while (count < 0 && errno == EINTR);
+    if (count < 0) return AVERROR(errno);
+    if (count == 0) return AVERROR_EOF;
+    input->offset += count;
+    return (int)count;
+}
+
+static int64_t sky_document_seek(void *opaque, int64_t offset, int whence) {
+    struct SkyDocumentInput *input = opaque;
+    if (whence == AVSEEK_SIZE) return input->size;
+    whence &= ~AVSEEK_FORCE;
+    int64_t base;
+    if (whence == SEEK_SET) base = 0;
+    else if (whence == SEEK_CUR) base = input->offset;
+    else if (whence == SEEK_END) base = input->size;
+    else return AVERROR(EINVAL);
+    if (offset < -base || (offset > 0 && base > INT64_MAX - offset)) return AVERROR(EINVAL);
+    input->offset = base + offset;
+    return input->offset;
+}
+
+static void sky_document_free(AVIOContext *io) {
+    if (!io) return;
+    struct SkyDocumentInput *input = io->opaque;
+    close(input->fd);
+    av_free(input);
+    av_freep(&io->buffer);
+    avio_context_free(&io);
+}
+
+static int sky_open_input(AVFormatContext **context, const char *filename,
+                          const AVInputFormat *format, AVDictionary **options) {
+    if (strncmp(filename, "skyfd:", 6) != 0)
+        return avformat_open_input(context, filename, format, options);
+    char *end;
+    long descriptor = strtol(filename + 6, &end, 10);
+    if (end == filename + 6 || *end || descriptor < 0 || descriptor > INT_MAX) return AVERROR(EINVAL);
+    int fd = dup((int)descriptor);
+    if (fd < 0) return AVERROR(errno);
+    struct stat info;
+    if (fstat(fd, &info) < 0) { int error = AVERROR(errno); close(fd); return error; }
+    if (!S_ISREG(info.st_mode)) { close(fd); return AVERROR(ESPIPE); }
+    struct SkyDocumentInput *input = av_mallocz(sizeof(*input));
+    uint8_t *buffer = av_malloc(32768);
+    if (!input || !buffer) { av_free(input); av_free(buffer); close(fd); return AVERROR(ENOMEM); }
+    input->fd = fd;
+    input->size = info.st_size;
+    AVIOContext *io = avio_alloc_context(buffer, 32768, 0, input,
+                                        sky_document_read, NULL, sky_document_seek);
+    if (!io) { av_free(input); av_free(buffer); close(fd); return AVERROR(ENOMEM); }
+    (*context)->pb = io;
+    (*context)->flags |= AVFMT_FLAG_CUSTOM_IO;
+    int result = avformat_open_input(context, NULL, format, options);
+    if (result < 0) sky_document_free(io);
+    return result;
+}
+
+static void sky_close_input(AVFormatContext **context) {
+    AVIOContext *io = *context && ((*context)->flags & AVFMT_FLAG_CUSTOM_IO) ? (*context)->pb : NULL;
+    avformat_close_input(context);
+    sky_document_free(io);
+}
+
 static int whisper_read_thread(void *arg)
 {
     VideoState *is = arg;
@@ -2045,7 +2148,7 @@ static int whisper_read_thread(void *arg)
     ic->interrupt_callback.callback = decode_interrupt_cb;
     ic->interrupt_callback.opaque = is;
 
-    ret = avformat_open_input(&ic, is->filename, NULL, NULL);
+    ret = sky_open_input(&ic, is->filename, NULL, NULL);
     if (ret < 0) {
 #ifdef __ANDROID__
         __android_log_print(ANDROID_LOG_ERROR, "SkyPlayer", 
@@ -2210,7 +2313,7 @@ fail:
         avcodec_free_context(&is->whisper_avctx);
     }
     if (ic) {
-        avformat_close_input(&ic);
+        sky_close_input(&ic);
         is->whisper_ic = NULL;
     }
     av_packet_free(&pkt);
@@ -3216,6 +3319,7 @@ static int video_thread_hw(VideoState *is)
             SDL_SignalCondition(is->viddec.empty_queue_cond);
         }
 
+        const int previous_packet_serial = is->viddec.pkt_serial;
         ret = packet_queue_get(&is->videoq, pkt, 1, &is->viddec.pkt_serial);
         if (ret < 0) {
             ALOG_I(FFPLAY_TAG, "[DEBUG] video_thread_hw: packet_queue_get returned %d, exiting", ret);
@@ -3229,12 +3333,14 @@ static int video_thread_hw(VideoState *is)
             continue;
         }
 
-        // 检测 flush packet（data 为 NULL 表示 flush）
-        if (!pkt->data) {
+        if (previous_packet_serial >= 0 && previous_packet_serial != is->viddec.pkt_serial) {
             sky_hw_decoder_flush(is->skyPlayer);
-            av_packet_unref(pkt);
-            continue;
+            is->viddec.finished = 0;
         }
+
+        // The demuxer queues an empty packet at EOF. Send EOS and drain delayed frames;
+        // seek flushing is handled by the packet serial change above.
+        const bool draining_eos = !pkt->data || pkt->size == 0;
 
         // 投喂 packet 到硬件解码器
         ret = sky_hw_decoder_send_packet(is->skyPlayer, pkt);
@@ -3247,6 +3353,7 @@ static int video_thread_hw(VideoState *is)
 
         // 循环取出所有可用的解码帧
         while (!is->videoq.abort_request) {
+            if (is->videoq.serial != is->viddec.pkt_serial) break;
             // Surface 直渲模式：使用两步流程（dequeue → 同步 → render）
             if (is->hw_surface_mode) {
                 ret = sky_hw_decoder_dequeue_frame(is->skyPlayer, frame);
@@ -3255,6 +3362,8 @@ static int video_thread_hw(VideoState *is)
             }
 
             if (ret == AVERROR(EAGAIN)) {
+                // After EOS no new packet will wake this loop; keep polling delayed output.
+                if (draining_eos) continue;
                 break;
             }
             if (ret == AVERROR_EOF) {
@@ -3322,10 +3431,8 @@ static int video_thread_hw(VideoState *is)
             }
 
             // Buffer 模式：取出 NV12 帧，走正常的滤镜 + queue_picture 路径
-            // PTS 处理
-            if (frame->pts != AV_NOPTS_VALUE) {
-                frame->pts = frame->best_effort_timestamp;
-            }
+            // MediaCodec supplies PTS; FFmpeg decoder best_effort_timestamp is unset here.
+            // Preserve the supplied timestamp for filtering and A/V synchronization.
             frame->sample_aspect_ratio = av_guess_sample_aspect_ratio(is->ic, is->video_st, frame);
 
             // 丢帧策略（与软解路径一致）
@@ -3420,7 +3527,7 @@ static int video_thread_hw(VideoState *is)
             if (ret < 0)
                 goto the_end;
 
-            break;
+            if (!draining_eos) break;
         }
     }
 
@@ -4258,7 +4365,7 @@ static int read_thread(void *arg)
     // 发送打开输入消息
     sky_post_simple_message(is->skyPlayer, SKY_MSG_OPEN_INPUT);
 
-    err = avformat_open_input(&ic, is->filename, is->iformat, &format_opts);
+    err = sky_open_input(&ic, is->filename, is->iformat, &format_opts);
     if (err < 0) {
         print_error(is->filename, err);
         ret = -1;
@@ -4574,7 +4681,7 @@ static int read_thread(void *arg)
     ret = 0;
  fail:
     if (ic && !is->ic)
-        avformat_close_input(&ic);
+        sky_close_input(&ic);
 
     av_packet_free(&pkt);
     if (ret != 0) {

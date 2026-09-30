@@ -10,6 +10,7 @@ plugins {
 android {
     namespace = "imt.zw.jxmediaplayer"
     compileSdk = 35
+    ndkVersion = "27.0.12077973"
 
     defaultConfig {
         minSdk = 30
@@ -58,6 +59,12 @@ android {
         getByName("debug") {
             jniLibs.srcDirs("src/main/jniLibs-debug")
         }
+    }
+
+    // AGP 8 only creates Maven components for explicitly published variants.
+    publishing {
+        singleVariant("release")
+        singleVariant("debug")
     }
 
     externalNativeBuild {

@@ -1,3 +1,4 @@
+#include "sky_packed_plane.h"
 #include "sky_egl2_renderer_nv12.h"
 
 static const char* TAG = "SkyEGL2RendererNV12Imp";
@@ -90,6 +91,16 @@ GLboolean SkyEGL2RendererNV12Imp::uploadTexture(AVFrame *avFrame) {
         return GL_FALSE;
     }
 
+    std::vector<uint8_t> packedY, packedUV;
+    const int uvWidth = (avFrame->width + 1) / 2;
+    const int uvHeight = (avFrame->height + 1) / 2;
+    const auto *y = skyPackedPlane(avFrame->data[0], avFrame->linesize[0],
+                                   avFrame->width, avFrame->height, packedY);
+    const auto *uv = skyPackedPlane(avFrame->data[1], avFrame->linesize[1],
+                                    uvWidth * 2, uvHeight, packedUV);
+    if (!y || !uv) return GL_FALSE;
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
     // NV12: Y plane + interleaved UV plane
     // Y plane
     glBindTexture(GL_TEXTURE_2D, nv12_textures[0]);
@@ -101,19 +112,19 @@ GLboolean SkyEGL2RendererNV12Imp::uploadTexture(AVFrame *avFrame) {
                  0,
                  GL_LUMINANCE,
                  GL_UNSIGNED_BYTE,
-                 avFrame->data[0]);
+                 y);
 
     // UV plane (interleaved)
     glBindTexture(GL_TEXTURE_2D, nv12_textures[1]);
     glTexImage2D(GL_TEXTURE_2D,
                  0,
                  GL_LUMINANCE_ALPHA,  // NV12 UV plane is interleaved
-                 avFrame->width / 2,  // 修正：NV12 UV平面宽度是Y平面的一半
-                 avFrame->height / 2, // UV height is half
+                 uvWidth,  // 修正：NV12 UV平面宽度是Y平面的一半
+                 uvHeight, // UV height is half
                  0,
                  GL_LUMINANCE_ALPHA,
                  GL_UNSIGNED_BYTE,
-                 avFrame->data[1]);
+                 uv);
 
     return GL_TRUE;
 }

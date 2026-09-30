@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import android.view.Surface
 import android.view.SurfaceHolder
@@ -336,38 +337,31 @@ class SkyMediaPlayer() : IMediaPlayer {
         }
     }
 
+    // Keep the SAF descriptor alive until native playback has been released.
+    // Native FFmpeg reads this descriptor directly without broad storage access.
+    private var sourceDescriptor: ParcelFileDescriptor? = null
+
     override fun setDataSource(context: Context, localVideoPath: String) {
         _setDataSource(localVideoPath)
+        sourceDescriptor?.close()
+        sourceDescriptor = null
     }
 
     override fun setDataSource(context: Context, uri: Uri) {
+        if (uri.scheme != "content") {
+            setDataSource(context, if (uri.scheme == "file") requireNotNull(uri.path) else uri.toString())
+            return
+        }
+        val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
+            ?: throw IllegalArgumentException("Cannot open selected video")
         try {
-            // 使用ContentResolver打开Uri并获取文件描述符
-            context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
-                // 对于Android 13+，我们需要使用文件描述符
-                // 但由于当前native层只支持路径，我们尝试获取真实路径
-                val cursor = context.contentResolver.query(uri, arrayOf(android.provider.MediaStore.Video.Media.DATA), null, null, null)
-                cursor?.use {
-                    if (it.moveToFirst()) {
-                        val columnIndex = it.getColumnIndex(android.provider.MediaStore.Video.Media.DATA)
-                        if (columnIndex >= 0) {
-                            val path = it.getString(columnIndex)
-                            if (!path.isNullOrEmpty()) {
-                                _setDataSource(path)
-                                return
-                            }
-                        }
-                    }
-                }
-
-                // 如果无法获取路径，使用Uri的toString作为fallback
-                // 注意：这可能不适用于所有情况，但对于content://media/external/file/类型的Uri可能有效
-                _setDataSource(uri.toString())
-            } ?: throw IllegalArgumentException("Cannot open Uri: $uri")
+            _setDataSource("skyfd:${descriptor.fd}")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to set data source from Uri: $uri", e)
+            descriptor.close()
             throw e
         }
+        sourceDescriptor?.close()
+        sourceDescriptor = descriptor
     }
 
     override fun prepareAsync() {
@@ -427,6 +421,9 @@ class SkyMediaPlayer() : IMediaPlayer {
             _release()
             _nativeMediaPlayer = 0L
         }
+
+        sourceDescriptor?.close()
+        sourceDescriptor = null
 
         Log.d(TAG, "SkyMediaPlayer release completed")
     }

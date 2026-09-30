@@ -288,17 +288,17 @@ player.setOnSeekCompleteListener {
 
 ### 环境要求
 
-- Android Studio Arctic Fox 或更高版本
-- NDK 21.0 或更高版本
-- CMake 3.22.1 或更高版本
-- Gradle 8.0 或更高版本
+- 完整 JDK 17（包括 javac）
+- Android SDK Platform 35、Build Tools 35.0.0
+- NDK 27.0.12077973、CMake 3.22.1
+- 使用仓库 Gradle Wrapper（Gradle 8.10.2 / AGP 8.8.0）
 
 ### 编译步骤
 
 1. 克隆仓库
 ```bash
-git clone https://github.com/zhiwei-wu/SkyPlayer.git
-cd SkyPlayer
+git clone https://github.com/zhiwei-wu/SkyMediaPlayer.git
+cd SkyMediaPlayer
 ```
 
 2. 打开项目
@@ -308,6 +308,21 @@ cd SkyPlayer
 ```bash
 ./gradlew :skymediaplayer:assembleRelease
 ```
+
+### 构建 demo APK
+
+APK 支持 Android 11+ / arm64-v8a。发布版本必须显式传入；下面是示例版本。
+
+```bash
+./gradlew :app:prepareReleaseApk :app:lintRelease \
+  -PskyDependencyMode=project -PskyAutoTestEnabled=false \
+  -PskyVersionName=1.6.1-preparation -PskyVersionCode=2
+```
+
+未签名产物位于 `app/build/release-apk/`，不能直接作为可安装正式包分发。
+维护者需在本机沿用原正式密钥签名并完成真机升级验收。
+完整命令、产物路径、证书核对与最小发布步骤见 [APK 发布流程](doc/APK_RELEASE.md)。
+本次检查与包体实测见 [发布前审查记录](doc/APK_RELEASE_AUDIT.md)。
 
 ### FFmpeg 编译配置
 

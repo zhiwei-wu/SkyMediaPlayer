@@ -86,3 +86,8 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
         GLESv2
         vulkan
         mediandk)
+# Android 16 KiB devices require both LOAD and RELRO boundaries to align.
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
+    "-Wl,-z,max-page-size=16384"
+    "-Wl,-z,common-page-size=16384"
+)

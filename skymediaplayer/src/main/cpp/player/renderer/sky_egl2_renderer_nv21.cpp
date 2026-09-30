@@ -1,3 +1,4 @@
+#include "sky_packed_plane.h"
 #include "sky_egl2_renderer_nv21.h"
 
 static const char* TAG = "SkyEGL2RendererNV21Imp";
@@ -90,6 +91,16 @@ GLboolean SkyEGL2RendererNV21Imp::uploadTexture(AVFrame *avFrame) {
         return GL_FALSE;
     }
 
+    std::vector<uint8_t> packedY, packedUV;
+    const int uvWidth = (avFrame->width + 1) / 2;
+    const int uvHeight = (avFrame->height + 1) / 2;
+    const auto *y = skyPackedPlane(avFrame->data[0], avFrame->linesize[0],
+                                   avFrame->width, avFrame->height, packedY);
+    const auto *uv = skyPackedPlane(avFrame->data[1], avFrame->linesize[1],
+                                    uvWidth * 2, uvHeight, packedUV);
+    if (!y || !uv) return GL_FALSE;
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
     // NV21: Y plane + interleaved VU plane
     // Y plane
     glBindTexture(GL_TEXTURE_2D, nv21_textures[0]);
@@ -101,7 +112,7 @@ GLboolean SkyEGL2RendererNV21Imp::uploadTexture(AVFrame *avFrame) {
                  0,
                  GL_LUMINANCE,
                  GL_UNSIGNED_BYTE,
-                 avFrame->data[0]);
+                 y);
 
     // VU plane (interleaved, swapped compared to NV12)
     glBindTexture(GL_TEXTURE_2D, nv21_textures[1]);
@@ -109,11 +120,11 @@ GLboolean SkyEGL2RendererNV21Imp::uploadTexture(AVFrame *avFrame) {
                  0,
                  GL_LUMINANCE_ALPHA,  // NV21 VU plane is interleaved
                  avFrame->linesize[1] / 2,  // UV width is half
-                 avFrame->height / 2,       // UV height is half
+                 uvHeight,       // UV height is half
                  0,
                  GL_LUMINANCE_ALPHA,
                  GL_UNSIGNED_BYTE,
-                 avFrame->data[1]);
+                 uv);
 
     return GL_TRUE;
 }

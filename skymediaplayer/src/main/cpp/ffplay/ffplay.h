@@ -380,6 +380,9 @@ int set_audio_filters(VideoState *is, const char *filters);
  */
 void sky_request_video_redraw(VideoState *is);
 
+/* Stop queue waits before joining output threads; does not free resources. */
+void sky_abort_playback(VideoState *is);
+
 #ifdef __cplusplus
 };
 #endif
